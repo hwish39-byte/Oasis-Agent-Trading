@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Oasis Agent Trading Demo</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">OASIS</div>
+      <div class="product">AGENTIC PAYMENTS</div>
+      <nav class="nav">
+        <a href="#loop">闭环</a>
+        <a href="#replay">回放</a>
+        <button class="nav-button" id="navRunButton">开始演示 →</button>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-copy">
+          <div class="label label-green">HEDERA · X402 · SINGLE AGENT</div>
+          <h1>让 AI Agent 自己为策略情报付费。</h1>
+          <p>
+            用户先批准预算，Strategy Agent 遇到受保护的 Market Signal API，
+            收到 402 后检查策略边界，再用 HBAR 完成一次按次付费请求。
+          </p>
+          <div class="hero-actions">
+            <button class="primary-button" id="heroRunButton">运行 Agent →</button>
+            <span>本地 mock Hedera testnet settlement</span>
+          </div>
+        </div>
+
+        <aside class="terminal-card" aria-label="Live payment conversation">
+          <div class="terminal-label">LIVE PAYMENT LOOP</div>
+          <div class="terminal-message">
+            <span>Strategy Agent</span>
+            ETH 出现突破候选，需要购买市场信号，价格不能超过用户授权。
+          </div>
+          <div class="terminal-message muted">
+            <span>Market Signal API</span>
+            HTTP 402 Payment Required · 0.03 HBAR · hedera:testnet
+          </div>
+          <div class="terminal-result">
+            <span>Policy check</span>
+            预算通过：0.20 HBAR → 0.17 HBAR
+          </div>
+        </aside>
+      </section>
+
+      <section class="core-loop" id="loop">
+        <div class="label label-yellow">01 / CORE LOOP</div>
+        <h2>最小可演示闭环</h2>
+        <div class="step-grid">
+          <article class="step-card">
+            <span>01</span>
+            <h3>策略候选</h3>
+            <p>单 Agent 发现 ETH 突破机会</p>
+          </article>
+          <article class="step-card active">
+            <span>02</span>
+            <h3>402 报价</h3>
+            <p>服务返回价格、网络、收款方</p>
+          </article>
+          <article class="step-card">
+            <span>03</span>
+            <h3>策略放行</h3>
+            <p>检查预算、单次限额和资产</p>
+          </article>
+          <article class="step-card">
+            <span>04</span>
+            <h3>付费取数</h3>
+            <p>带 X-PAYMENT 重试并拿到信号</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="demo-console" id="replay">
+        <div class="console-heading">
+          <div>
+            <div class="label label-blue">02 / DECISION REPLAY</div>
+            <h2>Agent 支付与决策回放</h2>
+          </div>
+          <button class="primary-button compact" id="runButton">运行演示 →</button>
+        </div>
+
+        <div class="console-layout">
+          <section class="policy-panel">
+            <h3>用户授权</h3>
+            <div class="metric-row">
+              <span>目标资产</span>
+              <strong>ETH</strong>
+            </div>
+            <div class="metric-row">
+              <span>每日研究预算</span>
+              <strong>0.20 HBAR</strong>
+            </div>
+            <div class="metric-row">
+              <span>单次服务上限</span>
+              <strong>0.05 HBAR</strong>
+            </div>
+            <div class="metric-row">
+              <span>执行模式</span>
+              <strong>Simulation only</strong>
+            </div>
+            <div class="budget-meter" aria-label="Budget meter">
+              <div id="budgetFill"></div>
+            </div>
+            <p id="budgetText">等待 Agent 发起请求</p>
+          </section>
+
+          <section class="timeline-panel">
+            <div class="timeline-head">
+              <h3>支付时间线</h3>
+              <span id="loopStatus">READY</span>
+            </div>
+            <ol class="timeline" id="timeline"></ol>
+          </section>
+
+          <section class="result-panel">
+            <div class="result-top">
+              <span>FINAL DECISION</span>
+              <strong id="decisionBadge">PENDING</strong>
+            </div>
+            <h3 id="decisionTitle">等待运行</h3>
+            <p id="decisionReason">点击运行演示，查看 Agent 如何在预算内完成 x402 付费服务调用。</p>
+
+            <div class="signal-box">
+              <span>MARKET SIGNAL</span>
+              <div class="signal-score">
+                <strong id="signalScore">--</strong>
+                <small>breakout score</small>
+              </div>
+              <p id="signalSummary">尚未购买市场信号。</p>
+            </div>
+
+            <div class="audit-box">
+              <span>HCS AUDIT</span>
+              <code id="auditHash">mock-topic / waiting</code>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

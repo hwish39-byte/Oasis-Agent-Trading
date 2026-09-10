@@ -1,0 +1,11 @@
+{
+  "asset": "ETH",
+  "spotPriceUsd": 3580.42,
+  "timeframe": "4h",
+  "momentum": "positive",
+  "volumeConfirmation": "weak",
+  "breakoutScore": 64,
+  "confidence": 0.58,
+  "recommendation": "hold",
+  "summary": "ETH momentum is constructive, but breakout volume is not strong enough to justify increasing exposure."
+}

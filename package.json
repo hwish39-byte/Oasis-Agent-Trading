@@ -1,0 +1,20 @@
+{
+  "name": "oasis-agent-trading",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@x402/hedera": "^2.25.0"
+  },
+  "scripts": {
+    "demo": "node apps/agent/src/demo.mjs",
+    "demo:check-real": "node apps/agent/src/check-real-config.mjs",
+    "demo:web": "node apps/demo-api/src/server.mjs",
+    "demo:frontend": "node apps/demo-api/src/server.mjs",
+    "demo:service": "node apps/market-signal-api/src/server.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
