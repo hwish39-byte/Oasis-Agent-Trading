@@ -46,6 +46,10 @@ function assessRisk({ evidence, hypothesis }) {
     blockingReasons.push("strong directional setup requires risk challenge before execution");
   }
 
+  if (evidence.riskChallenge?.verdict === "block") {
+    blockingReasons.push(...evidence.riskChallenge.blockingReasons);
+  }
+
   return {
     level: blockingReasons.length > 0 ? "high" : evidence.evidenceScore >= 75 ? "medium" : "low",
     blockingReasons,

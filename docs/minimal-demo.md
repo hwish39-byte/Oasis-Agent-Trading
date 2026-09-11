@@ -1,14 +1,17 @@
-# Minimal Single-Agent x402 + Hedera Demo
+# Minimal Agent Committee x402 + Hedera Demo
 
-This demo proves the first Oasis loop:
+This demo proves the first Oasis Agent Committee loop:
 
 1. Strategy Agent proposes researching an ETH breakout.
-2. Market Signal API responds with HTTP 402.
-3. The agent checks user policy before paying.
-4. The agent creates a Hedera HBAR x402 payment payload.
-5. The service settles the payment through the Blocky402/Hedera adapter.
-6. The service returns a gated market signal.
-7. The agent records an audit summary and returns a simulation-only decision.
+2. Risk Agent requests a paid adversarial risk challenge.
+3. Market Research Agent requests a paid market signal.
+4. User Policy checks each payment against service permissions, total budget, per-call limits, and service budgets.
+5. Each service responds with HTTP 402.
+6. The committee creates Hedera HBAR x402 payment payloads.
+7. The services settle payments through the Blocky402/Hedera adapter.
+8. The committee synthesizes the gated market signal and risk challenge.
+9. Execution Agent only creates a simulated order if policy and risk checks pass.
+10. The runtime records an audit summary and committee transcript.
 
 Run it locally:
 
@@ -20,6 +23,7 @@ Run the service alone:
 
 ```bash
 pnpm demo:service
+pnpm demo:risk-service
 ```
 
 Run the visual web demo:
@@ -30,12 +34,18 @@ pnpm demo:web
 
 Then open the printed localhost URL and click `运行演示`.
 
-The default mode is `HEDERA_PAYMENT_MODE=mock`. It uses:
+The default payment mode is `HEDERA_PAYMENT_MODE=mock`. It uses:
 
 - network: `hedera:testnet`
 - asset: `0.0.0` native HBAR
 - facilitator: `mock://blocky402`
-- transaction id: deterministic Hedera-shaped demo id
+- transaction ids: deterministic Hedera-shaped demo ids
+
+Real strategy runs use live market data by default and require an OpenAI API key from the frontend path. For deterministic local tests, set:
+
+```bash
+OASIS_LLM_MODE=rule OASIS_MARKET_DATA_MODE=fixture pnpm test
+```
 
 Real settlement is isolated behind `packages/hedera/src/index.mjs`.
 When Blocky402 and Hedera credentials are available, run with:

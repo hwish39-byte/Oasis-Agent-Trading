@@ -1,24 +1,15 @@
 import http from "node:http";
-import {
-  buildX402PaymentRequired,
-  createRequestId,
-  decodePaymentHeader
-} from "../../../packages/shared/src/index.mjs";
+import { buildX402PaymentRequired, createRequestId, decodePaymentHeader } from "../../../packages/shared/src/index.mjs";
 import {
   fetchBlocky402SupportedRequirements,
   getHederaConfig,
   settlePaymentForResource
 } from "../../../packages/hedera/src/index.mjs";
-import { createDefaultMarketDataProvider } from "../../agent/src/strategy/MarketContextBuilder.mjs";
 
-const SERVICE_NAME = "market-signal";
-const PRICE_TINYBAR = 3_000_000;
+const SERVICE_NAME = "risk-challenge";
+const PRICE_TINYBAR = 2_000_000;
 
-export async function createMarketSignalServer({
-  port = 4021,
-  host = "127.0.0.1",
-  signalProvider = createDefaultMarketDataProvider()
-} = {}) {
+export async function createRiskChallengeServer({ port = 4022, host = "127.0.0.1" } = {}) {
   const config = getHederaConfig();
   const supported = await fetchBlocky402SupportedRequirements({
     service: SERVICE_NAME,
@@ -36,18 +27,18 @@ export async function createMarketSignalServer({
         return;
       }
 
-      if (request.method !== "GET" || url.pathname !== "/signal") {
+      if (request.method !== "GET" || url.pathname !== "/challenge") {
         sendJson(response, 404, { error: "not_found" });
         return;
       }
 
       const asset = url.searchParams.get("asset") ?? "ETH";
-      const timeframe = url.searchParams.get("timeframe") ?? "4h";
-      const strategyType = url.searchParams.get("strategy") ?? "breakout";
+      const setup = url.searchParams.get("setup") ?? "BREAKOUT";
+      const confidence = Number(url.searchParams.get("confidence") ?? 0.5);
       const paymentHeader = request.headers["x-payment"];
 
       if (!paymentHeader) {
-        const requestId = createRequestId("market");
+        const requestId = createRequestId("risk");
         const paymentRequired = buildX402PaymentRequired({
           requestId,
           service: SERVICE_NAME,
@@ -79,10 +70,9 @@ export async function createMarketSignalServer({
       sendJson(response, 200, {
         service: SERVICE_NAME,
         asset,
-        timeframe,
         priceTinybar: PRICE_TINYBAR,
         payment: settlement,
-        signal: await signalProvider.getSignal({ asset, timeframe, strategyType })
+        challenge: buildRiskChallenge({ asset, setup, confidence })
       });
     } catch (error) {
       const status = error.statusCode ?? 500;
@@ -107,13 +97,39 @@ export async function createMarketSignalServer({
   };
 }
 
-export async function closeMarketSignalServer(server) {
+export async function closeRiskChallengeServer(server) {
   await new Promise((resolveClose, rejectClose) => {
     server.close((error) => {
       if (error) rejectClose(error);
       else resolveClose();
     });
   });
+}
+
+function buildRiskChallenge({ asset, setup, confidence }) {
+  const blockingReasons = [];
+
+  if (setup === "BREAKOUT") {
+    blockingReasons.push("breakout needs stronger volume confirmation before simulated execution");
+  }
+
+  if (confidence < 0.65) {
+    blockingReasons.push("initial confidence is below the committee execution threshold");
+  }
+
+  return {
+    verdict: blockingReasons.length > 0 ? "block" : "pass",
+    riskLevel: blockingReasons.length > 0 ? "high" : "medium",
+    blockingReasons,
+    stressScenarios: [
+      `${asset} rejects the breakout level and returns to the prior range`,
+      "liquidity thins after the signal and slippage rises",
+      "correlated majors weaken and invalidate momentum confirmation"
+    ],
+    counterArgument: blockingReasons.length > 0
+      ? `${asset} ${setup} evidence is not robust enough to increase exposure.`
+      : `${asset} ${setup} can proceed only as a simulation with tight invalidation.`
+  };
 }
 
 function sendJson(response, statusCode, body) {
@@ -124,7 +140,7 @@ function sendJson(response, statusCode, body) {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const port = Number(process.env.PORT ?? 4021);
-  const { baseUrl } = await createMarketSignalServer({ port });
-  console.log(`Market Signal API listening on ${baseUrl}`);
+  const port = Number(process.env.PORT ?? 4022);
+  const { baseUrl } = await createRiskChallengeServer({ port });
+  console.log(`Risk Challenge API listening on ${baseUrl}`);
 }

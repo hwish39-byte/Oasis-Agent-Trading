@@ -13,8 +13,11 @@ The Strategy Agent is now organized as a runtime instead of a fixed demo script.
 | Tool Planner | `apps/agent/src/strategy/ToolPlanner.mjs` |
 | Policy Guard + Payment Guard | `apps/agent/src/strategy/PolicyPaymentGuard.mjs` |
 | x402 paid tool calls | `apps/agent/src/strategy/X402PaidToolClient.mjs` |
+| Market Research Agent | `apps/agent/src/market/MarketResearchAgent.mjs` |
+| Risk Agent | `apps/agent/src/risk/RiskAgent.mjs` |
 | Evidence Synthesizer | `apps/agent/src/strategy/EvidenceSynthesizer.mjs` |
 | Risk-Aware Decision Composer | `apps/agent/src/strategy/DecisionComposer.mjs` |
+| Execution Agent | `apps/agent/src/execution/ExecutionAgent.mjs` |
 | Decision Memory | `apps/agent/src/strategy/MemoryManager.mjs` |
 | Performance Memory | `apps/agent/src/strategy/MemoryManager.mjs` |
 | Automatic review plan | `apps/agent/src/strategy/MemoryManager.mjs` |
@@ -36,12 +39,24 @@ execute_paid_research
 synthesize_evidence
 compose_strategy_decision
 final_policy_risk_check
+execution_agent_review
 write_audit
 persist_memory
 emit_observability
 ```
 
-`LLMReasoner.mjs` uses the OpenAI Responses API when `OPENAI_API_KEY` is present.
-Without an API key, it falls back to `RuleBasedStrategyReasoner` so local tests and mock demos remain deterministic.
+`LLMReasoner.mjs` uses a provider adapter selected by the frontend or by `STRATEGY_AGENT_PROVIDER`.
+Supported providers are OpenAI, DeepSeek, Claude, and GLM.
+Frontend strategy runs send `requireLlm: true`, so missing provider credentials fail clearly instead of pretending to be a real agent.
+Tests and explicit offline demos can set `OASIS_LLM_MODE=rule` to use `RuleBasedStrategyReasoner`.
 
 LLM output is treated as a hypothesis, not as authority. Payment and execution are still controlled by deterministic policy and risk guards.
+
+`MarketContextBuilder.mjs` now uses live Binance public market data by default and computes the current signal for the requested asset/timeframe. The old ETH snapshot is retained only through `OASIS_MARKET_DATA_MODE=fixture` for deterministic tests.
+
+The current local demo buys two services in mock mode when policy allows it:
+
+- `market-signal` for 0.03 HBAR through `apps/market-signal-api`
+- `risk-challenge` for 0.02 HBAR through `apps/risk-challenge-api`
+
+Both payments are surfaced in the timeline and `committeeTranscript`.

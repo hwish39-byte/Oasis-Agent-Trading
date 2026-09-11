@@ -3,7 +3,11 @@ export const defaultUserPolicy = Object.freeze({
   targetAsset: "ETH",
   dailyBudgetTinybar: 20_000_000,
   maxPaymentPerCallTinybar: 5_000_000,
-  allowedServices: ["market-signal"],
+  allowedServices: ["market-signal", "risk-challenge"],
+  serviceBudgetsTinybar: {
+    "market-signal": 12_000_000,
+    "risk-challenge": 6_000_000
+  },
   executionMode: "simulation",
   riskRules: ["paid_research_must_stay_within_budget"]
 });
@@ -31,6 +35,18 @@ export function checkPaymentAllowed({ policy, ledger, paymentRequirement, servic
 
   if (requestedTinybar > remainingTinybar) {
     reasons.push(`price ${requestedTinybar} tinybar exceeds remaining budget ${remainingTinybar}`);
+  }
+
+  const serviceBudgetTinybar = policy.serviceBudgetsTinybar?.[service];
+  if (Number.isInteger(serviceBudgetTinybar)) {
+    const serviceSpentTinybar = ledger.reservations
+      .filter((reservation) => reservation.service === service)
+      .reduce((sum, reservation) => sum + Number(reservation.amountTinybar), 0);
+    const serviceRemainingTinybar = serviceBudgetTinybar - serviceSpentTinybar;
+
+    if (requestedTinybar > serviceRemainingTinybar) {
+      reasons.push(`price ${requestedTinybar} tinybar exceeds ${service} budget remaining ${serviceRemainingTinybar}`);
+    }
   }
 
   if (paymentRequirement.network !== "hedera:testnet") {

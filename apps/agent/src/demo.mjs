@@ -2,23 +2,51 @@ import {
   closeMarketSignalServer,
   createMarketSignalServer
 } from "../../market-signal-api/src/server.mjs";
+import {
+  closeRiskChallengeServer,
+  createRiskChallengeServer
+} from "../../risk-challenge-api/src/server.mjs";
 import { StrategyAgent } from "./strategy/StrategyAgent.mjs";
 
-export async function runSingleAgentDemo({ startLocalService = true, serviceBaseUrl, strategyAgent } = {}) {
-  let ownedServer;
+export async function runSingleAgentDemo({
+  startLocalService = true,
+  serviceBaseUrl,
+  marketServiceBaseUrl,
+  riskServiceBaseUrl,
+  strategyAgent,
+  userMessage,
+  intent,
+  strategyDraft
+} = {}) {
+  let ownedMarketServer;
+  let ownedRiskServer;
 
   if (startLocalService) {
-    const started = await createMarketSignalServer({ port: 0 });
-    ownedServer = started.server;
-    serviceBaseUrl = started.baseUrl;
+    const market = await createMarketSignalServer({ port: 0 });
+    const risk = await createRiskChallengeServer({ port: 0 });
+    ownedMarketServer = market.server;
+    ownedRiskServer = risk.server;
+    marketServiceBaseUrl = market.baseUrl;
+    riskServiceBaseUrl = risk.baseUrl;
   }
 
   try {
     const agent = strategyAgent ?? new StrategyAgent();
-    return await agent.run({ serviceBaseUrl });
+    return await agent.run({
+      userMessage,
+      intent,
+      strategyDraft,
+      serviceBaseUrl,
+      marketServiceBaseUrl: marketServiceBaseUrl ?? serviceBaseUrl,
+      riskServiceBaseUrl
+    });
   } finally {
-    if (ownedServer) {
-      await closeMarketSignalServer(ownedServer);
+    if (ownedMarketServer) {
+      await closeMarketSignalServer(ownedMarketServer);
+    }
+
+    if (ownedRiskServer) {
+      await closeRiskChallengeServer(ownedRiskServer);
     }
   }
 }

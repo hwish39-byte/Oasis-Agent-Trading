@@ -11,27 +11,44 @@
       <div class="brand">OASIS</div>
       <div class="product">STRATEGY WORKSPACE</div>
       <nav class="nav">
-        <a href="#workspace">工作台</a>
-        <a href="#committee">委员会</a>
-        <a href="#run">运行</a>
+        <button class="nav-tab is-active" data-page-target="setup">Intent</button>
+        <button class="nav-tab" data-page-target="plan">Agent Plan</button>
+        <button class="nav-tab" data-page-target="run">Run</button>
+        <button class="nav-tab" data-page-target="decision">Decision</button>
       </nav>
     </header>
 
     <main class="workspace-shell" id="workspace">
-      <section class="intent-panel">
-        <div class="panel-kicker">USER INTENT</div>
-        <h1>描述你的交易目标</h1>
+      <div class="page is-active" data-page="setup">
+        <section class="intent-panel">
+        <div class="panel-kicker">USER INTENT -> STRATEGY AGENT</div>
+        <h1>让 Strategy Agent 生成策略</h1>
         <textarea id="intentInput">我想做 ETH 4h 突破策略，最多花 0.2 HBAR 买研究信息，单次服务别超过 0.05 HBAR，只做模拟交易，风险保守。</textarea>
+        <div class="model-controls">
+          <label>
+            模型服务商
+            <select id="providerInput">
+              <option value="openai" selected>OpenAI</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="claude">Claude</option>
+              <option value="glm">GLM</option>
+              <option value="rule">Rule fallback</option>
+            </select>
+          </label>
+          <label>
+            模型名
+            <input id="modelInput" value="gpt-5" />
+          </label>
+        </div>
         <div class="intent-actions">
-          <button class="primary-button" id="analyzeButton">生成策略</button>
-          <button class="ghost-button" id="runButton" disabled>运行 Agent</button>
+          <button class="primary-button" id="analyzeButton">Strategy Agent 生成草案</button>
         </div>
         <p class="status-line" id="workspaceStatus">等待输入</p>
-      </section>
+        </section>
 
-      <section class="policy-panel">
+        <section class="policy-panel">
         <div class="panel-title">
-          <span>POLICY DRAFT</span>
+          <span>STRATEGY AGENT: DRAFT POLICY</span>
           <strong id="policyStatus">PENDING</strong>
         </div>
         <div class="policy-grid">
@@ -71,17 +88,11 @@
             </select>
           </label>
         </div>
-        <div class="approval-row">
-          <label class="check-row">
-            <input id="policyApprovedInput" type="checkbox" />
-            <span>批准该 policy</span>
-          </label>
-        </div>
-      </section>
+        </section>
 
-      <section class="strategy-panel">
+        <section class="strategy-panel">
         <div class="panel-title">
-          <span>STRATEGY DRAFT</span>
+          <span>STRATEGY AGENT: DRAFT STRATEGY</span>
           <strong id="strategyStatus">EMPTY</strong>
         </div>
         <h2 id="strategyName">尚未生成策略</h2>
@@ -96,11 +107,13 @@
             <ul id="riskList"></ul>
           </div>
         </div>
-      </section>
+        </section>
+      </div>
 
-      <section class="committee-panel" id="committee">
+      <div class="page" data-page="plan">
+        <section class="committee-panel" id="committee">
         <div class="panel-title">
-          <span>AGENT COMMITTEE</span>
+          <span>STRATEGY AGENT: PLAN EVIDENCE</span>
           <strong id="committeeStatus">IDLE</strong>
         </div>
         <div class="agent-lanes">
@@ -121,29 +134,49 @@
             <p id="executionLane">等待最终决策</p>
           </article>
         </div>
-      </section>
+        </section>
 
-      <section class="payment-panel">
+        <section class="payment-panel">
         <div class="panel-title">
-          <span>PAYMENT REVIEW</span>
+          <span>USER APPROVAL</span>
           <strong id="paymentStatus">NO PLAN</strong>
         </div>
         <div id="paymentList" class="payment-list"></div>
+        <ol id="x402Flow" class="x402-flow" aria-label="x402 Hedera payment flow"></ol>
         <div class="budget-meter" aria-label="Budget meter">
           <div id="budgetFill"></div>
         </div>
         <p id="budgetText">尚未产生付费计划</p>
-      </section>
+        <div class="approval-row">
+          <label class="check-row">
+            <input id="policyApprovedInput" type="checkbox" />
+            <span>批准该 policy，并允许 Strategy Agent 在预算内运行</span>
+          </label>
+          <button class="primary-button approval-run-button" id="runButton" disabled>运行完整决策循环</button>
+        </div>
+        </section>
+      </div>
 
-      <section class="run-panel" id="run">
+      <div class="page" data-page="run">
+        <section class="run-panel" id="run">
         <div class="panel-title">
           <span>RUN TIMELINE</span>
           <strong id="loopStatus">READY</strong>
         </div>
         <ol class="timeline" id="timeline"></ol>
-      </section>
+        </section>
 
-      <section class="result-panel">
+        <section class="transcript-panel">
+        <div class="panel-title">
+          <span>COMMITTEE TRANSCRIPT</span>
+          <strong id="transcriptStatus">WAITING</strong>
+        </div>
+        <ol class="committee-transcript" id="committeeTranscript"></ol>
+        </section>
+      </div>
+
+      <div class="page" data-page="decision">
+        <section class="result-panel">
         <div class="result-top">
           <span>FINAL DECISION</span>
           <strong id="decisionBadge">PENDING</strong>
@@ -158,11 +191,28 @@
           </div>
           <p id="signalSummary">尚未返回证据。</p>
         </div>
+        <div class="runtime-meta">
+          <div>
+            <span>LLM PROVIDER</span>
+            <strong id="llmProvider">waiting</strong>
+          </div>
+          <div>
+            <span>MARKET SOURCE</span>
+            <strong id="marketSource">waiting</strong>
+          </div>
+        </div>
         <div class="audit-box">
           <span>AUDIT</span>
           <code id="auditHash">waiting</code>
         </div>
-      </section>
+        </section>
+      </div>
+
+      <div class="pager-controls" aria-label="Page controls">
+        <button class="ghost-page-button" id="prevPageButton">上一页</button>
+        <span id="pageStatus">Setup / 1 of 4</span>
+        <button class="primary-page-button" id="nextPageButton">下一页</button>
+      </div>
     </main>
 
     <script src="./app.js"></script>

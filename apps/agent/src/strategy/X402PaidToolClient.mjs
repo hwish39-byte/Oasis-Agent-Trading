@@ -9,7 +9,50 @@ export class X402PaidToolClient {
   }
 
   async callMarketSignal({ serviceBaseUrl, asset, policy, ledger, plannedCall }) {
-    const firstResponse = await this.fetch(`${serviceBaseUrl}/signal?asset=${asset}`);
+    const params = new URLSearchParams({
+      asset,
+      timeframe: policy.strategyIntent?.timeframe ?? "4h",
+      strategy: policy.strategyIntent?.strategyType ?? "breakout"
+    });
+
+    return this.callPaidResource({
+      service: "market-signal",
+      serviceBaseUrl,
+      resourcePath: `/signal?${params.toString()}`,
+      policy,
+      ledger,
+      plannedCall,
+      extractResult: (paidResult) => ({
+        signal: paidResult.signal,
+        result: paidResult
+      })
+    });
+  }
+
+  async callRiskChallenge({ serviceBaseUrl, asset, hypothesis, policy, ledger, plannedCall }) {
+    const params = new URLSearchParams({
+      asset,
+      setup: hypothesis.setup,
+      confidence: String(hypothesis.initialConfidence)
+    });
+
+    return this.callPaidResource({
+      service: "risk-challenge",
+      serviceBaseUrl,
+      resourcePath: `/challenge?${params.toString()}`,
+      policy,
+      ledger,
+      plannedCall,
+      extractResult: (paidResult) => ({
+        challenge: paidResult.challenge,
+        result: paidResult
+      })
+    });
+  }
+
+  async callPaidResource({ service, serviceBaseUrl, resourcePath, policy, ledger, plannedCall, extractResult }) {
+    const endpoint = `${serviceBaseUrl}${resourcePath}`;
+    const firstResponse = await this.fetch(endpoint);
     const paymentRequired = await firstResponse.json();
 
     if (firstResponse.status !== 402) {
@@ -21,14 +64,14 @@ export class X402PaidToolClient {
       policy,
       ledger,
       paymentRequirement: requirement,
-      service: "market-signal",
+      service,
       plannedCall
     });
 
     if (!policyCheck.allowed) {
       return {
         status: "blocked",
-        service: "market-signal",
+        service,
         requirement,
         paymentRequired,
         policyCheck,
@@ -43,7 +86,7 @@ export class X402PaidToolClient {
       policyId: policy.id
     });
 
-    const paidResponse = await this.fetch(`${serviceBaseUrl}/signal?asset=${asset}`, {
+    const paidResponse = await this.fetch(endpoint, {
       headers: {
         "X-PAYMENT": encodePaymentHeader(paymentPayload)
       }
@@ -57,20 +100,23 @@ export class X402PaidToolClient {
     recordSpend({
       ledger,
       requestId: requirement.extra.requestId,
-      service: "market-signal",
+      service,
       amountTinybar: Number(requirement.amount),
       transactionId: paidResult.payment.transactionId
     });
 
+    const extracted = extractResult(paidResult);
+
     return {
       status: "settled",
-      service: "market-signal",
+      service,
       requirement,
       paymentRequired,
       policyCheck,
       paymentPayload,
       payment: paidResult.payment,
-      result: paidResult,
+      ...extracted,
+      result: extracted.result,
       priceHbar: tinybarToHbar(requirement.amount)
     };
   }

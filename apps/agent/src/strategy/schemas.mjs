@@ -15,6 +15,7 @@ export const STRATEGY_STEPS = Object.freeze([
   "synthesize_evidence",
   "compose_strategy_decision",
   "final_policy_risk_check",
+  "execution_agent_review",
   "persist_memory",
   "write_audit",
   "emit_observability"
@@ -24,6 +25,9 @@ export function createStrategyState({ runId, policy, asset }) {
   return {
     runId,
     asset,
+    userMessage: null,
+    intent: null,
+    strategyDraft: null,
     policy,
     ledger: null,
     marketContext: null,
@@ -35,8 +39,10 @@ export function createStrategyState({ runId, policy, asset }) {
     toolPlan: null,
     policyChecks: [],
     payments: [],
+    committeeTranscript: [],
     evidence: null,
     decision: null,
+    executionResult: null,
     audit: null,
     metrics: null,
     timeline: []

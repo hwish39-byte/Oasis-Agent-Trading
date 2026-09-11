@@ -152,7 +152,7 @@ The demo should show:
 │   ├── policy/                # Budget and risk policy engine
 │   └── shared/                # Shared types and utilities
 ├── data/
-│   └── snapshots/             # Fixed demo market snapshots
+│   └── snapshots/             # Explicit test fixtures, not the default runtime market source
 └── docs/
     ├── architecture.md
     └── payment-flow.md
@@ -160,11 +160,27 @@ The demo should show:
 
 ## Development Status
 
-This repository is at the documentation and project-shaping stage. Implementation commands should be updated after the application scaffold is created.
+The repository now includes a runnable local MVP:
+
+- Static frontend strategy workspace.
+- Demo API for intent parsing, policy drafting, strategy drafting, planning, and runtime execution.
+- Strategy Agent runtime with Market Research, Risk, and Execution committee members.
+- x402-gated Market Signal API and Risk Challenge API.
+- LLM-driven Strategy Agent runtime for real frontend runs when `OPENAI_API_KEY` is configured.
+- Live crypto market context from Binance public market data by default.
+- Mock Hedera HBAR settlement by default, with real x402/Blocky402 adapter hooks isolated in `packages/hedera`.
+- Audit hashes, committee transcript, JSONL decision memory, and node:test coverage.
 
 ## Setup
 
-To be filled after the stack is finalized.
+Install dependencies, then run:
+
+```bash
+pnpm test
+pnpm demo:web
+```
+
+Open the printed localhost URL and click through the workspace.
 
 Expected environment variables may include:
 
@@ -176,7 +192,28 @@ HEDERA_SERVICE_ACCOUNT_ID=
 HEDERA_SERVICE_PRIVATE_KEY=
 BLOCKY402_FACILITATOR_URL=
 HCS_TOPIC_ID=
+OPENAI_API_KEY=
+DEEPSEEK_API_KEY=
+ANTHROPIC_API_KEY=
+GLM_API_KEY=
+STRATEGY_AGENT_PROVIDER=openai
+STRATEGY_AGENT_MODEL=gpt-5
+OASIS_LLM_MODE=required
+OASIS_MARKET_DATA_MODE=live
 ```
+
+Supported strategy model providers are:
+
+| Provider | Env key | Default model | API style |
+| --- | --- | --- | --- |
+| `openai` | `OPENAI_API_KEY` | `gpt-5` | OpenAI Responses API |
+| `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-chat` | OpenAI-compatible chat completions |
+| `claude` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5` | Anthropic Messages API |
+| `glm` | `GLM_API_KEY` | `glm-4.5` | OpenAI-compatible chat completions |
+
+The frontend lets the user choose provider and model for each run. API keys stay on the server in `.env`; they are never sent from the browser.
+
+`OASIS_LLM_MODE=required` makes frontend strategy runs fail clearly when the selected provider API key is missing instead of silently falling back to the deterministic test reasoner. Tests set `OASIS_LLM_MODE=rule` and `OASIS_MARKET_DATA_MODE=fixture` explicitly.
 
 Do not commit real private keys, seed phrases, API keys, or funded account credentials.
 

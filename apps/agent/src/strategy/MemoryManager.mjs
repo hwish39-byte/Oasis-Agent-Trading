@@ -38,6 +38,8 @@ export class MemoryManager {
       conflictLevel: state.evidence.conflictLevel,
       paidServices: state.payments.map((payment) => payment.service),
       totalCostTinybar: state.payments.reduce((sum, payment) => sum + Number(payment.amountTinybar ?? 0), 0),
+      executionStatus: state.executionResult?.status,
+      simulatedOrderId: state.executionResult?.simulatedOrder?.orderId,
       reason: decision.reason,
       auditHash: state.audit?.messageHash
     };
