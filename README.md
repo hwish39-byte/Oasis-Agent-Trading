@@ -126,6 +126,3 @@ Never commit private keys, seed phrases, API keys, or funded account credentials
 
 [MIT](LICENSE) © Oasis Agent Trading contributors.
 
-## Acknowledgments
-
-Thanks to **[LXDAO](https://lxdao.io)**, **[EthPanda](https://ethpanda.org)**, and the **[Monad](https://monad.xyz)** team for their support, tooling, and guidance.
