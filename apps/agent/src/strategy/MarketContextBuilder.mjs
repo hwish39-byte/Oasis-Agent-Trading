@@ -189,46 +189,6 @@ export class CoinGeckoMarketDataProvider {
   }
 }
 
-export class FixedSnapshotMarketContextBuilder extends MarketContextBuilder {
-  constructor({ snapshotPath = legacySnapshotPath, clock = nowIso } = {}) {
-    super({ marketDataProvider: null, clock });
-    this.snapshotPath = snapshotPath;
-  }
-
-  async build({ asset, intent, strategyDraft, timeframe } = {}) {
-    const snapshot = JSON.parse(await readFile(this.snapshotPath, "utf8"));
-    const resolvedAsset = normalizeAsset(asset ?? intent?.asset ?? strategyDraft?.asset ?? snapshot.asset);
-    const resolvedTimeframe = normalizeTimeframe(timeframe ?? intent?.timeframe ?? strategyDraft?.timeframe ?? snapshot.timeframe);
-    const warnings = [];
-
-    if (snapshot.asset !== resolvedAsset) {
-      warnings.push(`snapshot asset ${snapshot.asset} does not match requested asset ${resolvedAsset}`);
-    }
-
-    if (snapshot.timeframe !== resolvedTimeframe) {
-      warnings.push(`snapshot timeframe ${snapshot.timeframe} does not match requested timeframe ${resolvedTimeframe}`);
-    }
-
-    return assertMarketContext({
-      asset: resolvedAsset,
-      source: "local_snapshot_test_fixture",
-      observedAt: this.clock(),
-      snapshot: {
-        ...snapshot,
-        asset: resolvedAsset,
-        timeframe: resolvedTimeframe,
-        source: "local_snapshot_test_fixture",
-        warnings
-      },
-      regime: inferMarketRegime(snapshot),
-      quality: {
-        isFresh: true,
-        warnings
-      }
-    });
-  }
-}
-
 export class FixedSnapshotMarketDataProvider {
   constructor({ snapshotPath = legacySnapshotPath } = {}) {
     this.snapshotPath = snapshotPath;

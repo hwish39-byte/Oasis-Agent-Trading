@@ -190,19 +190,6 @@ export function recordAgentCharge({ ledger, quoteId, service, agent, reasoningTi
   return charge;
 }
 
-export function recordSpend({ ledger, requestId, service, amountTinybar, transactionId }) {
-  return recordAgentCharge({
-    ledger,
-    quoteId: requestId,
-    requestId,
-    service,
-    agent: service,
-    reasoningTier: "standard",
-    amountTinybar,
-    transactionId
-  });
-}
-
 export function normalizeUserPolicy(policy = defaultUserPolicy) {
   const sessionBudgetTinybar = policy.sessionBudgetTinybar ?? policy.dailyBudgetTinybar ?? defaultUserPolicy.sessionBudgetTinybar;
   const maxPaidAgentCallTinybar = policy.maxPaidAgentCallTinybar
