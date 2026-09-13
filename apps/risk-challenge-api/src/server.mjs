@@ -5,15 +5,15 @@ import {
   getHederaConfig,
   settlePaymentForResource
 } from "../../../packages/hedera/src/index.mjs";
+import { quotePaidAgentCall, usageFromSearchParams } from "../../../packages/shared/src/pricing.mjs";
 
 const SERVICE_NAME = "risk-challenge";
-const PRICE_TINYBAR = 2_000_000;
 
 export async function createRiskChallengeServer({ port = 4022, host = "127.0.0.1" } = {}) {
   const config = getHederaConfig();
   const supported = await fetchBlocky402SupportedRequirements({
     service: SERVICE_NAME,
-    amountTinybar: PRICE_TINYBAR,
+    amountTinybar: quotePaidAgentCall({ service: SERVICE_NAME, reasoningTier: "standard" }).quotedTinybar,
     description: `${SERVICE_NAME} pay-per-request result`
   });
   const pendingRequirements = new Map();
@@ -35,6 +35,11 @@ export async function createRiskChallengeServer({ port = 4022, host = "127.0.0.1
       const asset = url.searchParams.get("asset") ?? "ETH";
       const setup = url.searchParams.get("setup") ?? "BREAKOUT";
       const confidence = Number(url.searchParams.get("confidence") ?? 0.5);
+      const locale = url.searchParams.get("locale") ?? "en-US";
+      const reasoningTier = normalizeTier(url.searchParams.get("tier"));
+      const usage = usageFromSearchParams({ service: SERVICE_NAME, reasoningTier, searchParams: url.searchParams });
+      const quote = quotePaidAgentCall({ service: SERVICE_NAME, reasoningTier, usage });
+      const priceTinybar = quote.quotedTinybar;
       const paymentHeader = request.headers["x-payment"];
 
       if (!paymentHeader) {
@@ -43,7 +48,7 @@ export async function createRiskChallengeServer({ port = 4022, host = "127.0.0.1
           requestId,
           service: SERVICE_NAME,
           receiverAccountId: config.serviceAccountId,
-          priceTinybar: PRICE_TINYBAR,
+          priceTinybar,
           network: "hedera:testnet",
           feePayer: supported?.feePayer
         });
@@ -54,7 +59,8 @@ export async function createRiskChallengeServer({ port = 4022, host = "127.0.0.1
       }
 
       const paymentPayload = decodePaymentHeader(paymentHeader);
-      const expectedRequirement = pendingRequirements.get(paymentPayload.requestId);
+      const expectedRequirement = pendingRequirements.get(paymentPayload.requestId)
+        ?? expectedRequirementFromPaymentPayload({ paymentPayload, service: SERVICE_NAME, config, priceTinybar });
 
       if (!expectedRequirement) {
         sendJson(response, 402, {
@@ -70,9 +76,12 @@ export async function createRiskChallengeServer({ port = 4022, host = "127.0.0.1
       sendJson(response, 200, {
         service: SERVICE_NAME,
         asset,
-        priceTinybar: PRICE_TINYBAR,
+        reasoningTier,
+        priceTinybar,
+        usage,
+        pricingModel: quote.pricingModel,
         payment: settlement,
-        challenge: buildRiskChallenge({ asset, setup, confidence })
+        challenge: buildRiskChallenge({ asset, setup, confidence, locale })
       });
     } catch (error) {
       const status = error.statusCode ?? 500;
@@ -106,29 +115,56 @@ export async function closeRiskChallengeServer(server) {
   });
 }
 
-function buildRiskChallenge({ asset, setup, confidence }) {
+function normalizeTier(value) {
+  return ["standard", "deep"].includes(value) ? value : "standard";
+}
+
+function expectedRequirementFromPaymentPayload({ paymentPayload, service, config, priceTinybar }) {
+  const accepted = paymentPayload.paymentPayload?.accepted ?? paymentPayload.accepted;
+  if (accepted) return accepted;
+
+  if (Number(paymentPayload.amount) !== priceTinybar) return null;
+  if (paymentPayload.payTo !== config.serviceAccountId) return null;
+
+  return buildX402PaymentRequired({
+    requestId: paymentPayload.requestId,
+    service,
+    receiverAccountId: config.serviceAccountId,
+    priceTinybar,
+    network: "hedera:testnet"
+  }).accepts[0];
+}
+
+function buildRiskChallenge({ asset, setup, confidence, locale }) {
+  const isZh = locale === "zh-CN";
   const blockingReasons = [];
 
   if (setup === "BREAKOUT") {
-    blockingReasons.push("breakout needs stronger volume confirmation before simulated execution");
+    blockingReasons.push(isZh ? "突破在模拟执行前需要更强的成交量确认" : "breakout needs stronger volume confirmation before simulated execution");
   }
 
   if (confidence < 0.65) {
-    blockingReasons.push("initial confidence is below the committee execution threshold");
+    blockingReasons.push(isZh ? "初始置信度低于委员会执行阈值" : "initial confidence is below the committee execution threshold");
   }
 
   return {
     verdict: blockingReasons.length > 0 ? "block" : "pass",
     riskLevel: blockingReasons.length > 0 ? "high" : "medium",
     blockingReasons,
-    stressScenarios: [
-      `${asset} rejects the breakout level and returns to the prior range`,
-      "liquidity thins after the signal and slippage rises",
-      "correlated majors weaken and invalidate momentum confirmation"
-    ],
+    stressScenarios: isZh
+      ? [
+          `${asset} 突破失败并回到前一区间`,
+          "信号出现后流动性变薄，滑点上升",
+          "相关主流资产转弱，动量确认失效"
+        ]
+      : [
+          `${asset} rejects the breakout level and returns to the prior range`,
+          "liquidity thins after the signal and slippage rises",
+          "correlated majors weaken and invalidate momentum confirmation"
+        ],
     counterArgument: blockingReasons.length > 0
-      ? `${asset} ${setup} evidence is not robust enough to increase exposure.`
-      : `${asset} ${setup} can proceed only as a simulation with tight invalidation.`
+      ? isZh ? `${asset} ${setup} 证据还不够稳健，不应增加敞口。` : `${asset} ${setup} evidence is not robust enough to increase exposure.`
+      : isZh ? `${asset} ${setup} 只能在严格失效条件下进行模拟。` : `${asset} ${setup} can proceed only as a simulation with tight invalidation.`
   };
 }
 

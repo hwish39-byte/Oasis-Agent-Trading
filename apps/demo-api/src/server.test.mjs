@@ -21,10 +21,15 @@ test("demo API serves frontend and runs the local agent loop in mock mode", asyn
 
     assert.equal(runResponse.status, 200);
     assert.equal(result.finalDecision, "NO_TRADE");
-    assert.equal(result.budget.spentTinybar, 5_000_000);
-    assert.equal(result.metrics.paymentsSettled, 2);
-    assert.equal(result.timeline.some((event) => event.step === "payment_required"), true);
-    assert.equal(result.timeline.some((event) => event.step === "payment_settled"), true);
+    assert.equal(
+      result.budget.spentTinybar,
+      result.budget.charges.reduce((sum, charge) => sum + Number(charge.amountTinybar), 0)
+    );
+    assert.equal(result.budget.spentTinybar > 2_000_000, true);
+    assert.equal(result.metrics.paymentsSettled, result.budget.charges.length);
+    assert.equal(result.metrics.paymentsSettled >= 1, true);
+    assert.equal(result.timeline.some((event) => event.step === "agent_quote"), true);
+    assert.equal(result.timeline.some((event) => event.step === "agent_charge_settled"), true);
     assert.equal(result.committeeTranscript.some((event) => event.agent === "Execution Agent"), true);
   } finally {
     await closeDemoApiServer(server);
@@ -67,7 +72,9 @@ test("strategy product APIs build intent policy draft strategy draft and plan", 
     });
     const { policyDraft } = await policyResponse.json();
     assert.equal(policyDraft.targetAsset, "ETH");
-    assert.equal(policyDraft.allowedServices.includes("market-signal"), true);
+    assert.equal(policyDraft.sessionBudgetTinybar, 20_000_000);
+    assert.equal(policyDraft.allowedPaidAgents.includes("market-signal"), true);
+    assert.equal(policyDraft.autoPayEnabled, true);
 
     const strategyResponse = await fetch(`${baseUrl}/strategy/draft`, {
       method: "POST",
@@ -76,7 +83,7 @@ test("strategy product APIs build intent policy draft strategy draft and plan", 
     });
     const { strategyDraft } = await strategyResponse.json();
     assert.match(strategyDraft.name, /ETH/);
-    assert.equal(strategyDraft.requiredEvidence.includes("market-signal"), true);
+    assert.equal(strategyDraft.requiredEvidence.includes("Market Agent"), true);
 
     const planResponse = await fetch(`${baseUrl}/strategy/plan`, {
       method: "POST",
@@ -86,6 +93,9 @@ test("strategy product APIs build intent policy draft strategy draft and plan", 
     const plan = await planResponse.json();
     assert.equal(plan.hypothesis.asset, "ETH");
     assert.equal(plan.agentPlan.plannedToolCalls.some((call) => call.service === "market-signal"), true);
+    assert.equal(plan.agentPlan.plannedToolCalls.some((call) => call.agent === "Market Agent"), true);
+    assert.equal(plan.agentPlan.plannedToolCalls.every((call) => Number.isInteger(call.quotedTinybar)), true);
+    assert.equal(plan.agentPlan.plannedToolCalls.every((call) => typeof call.reasoningTier === "string"), true);
 
     const unapprovedRunResponse = await fetch(`${baseUrl}/strategy/run`, {
       method: "POST",
@@ -93,27 +103,36 @@ test("strategy product APIs build intent policy draft strategy draft and plan", 
       body: JSON.stringify({
         message: intent.message,
         intent,
-        policy: policyDraft,
+        policy: {
+          ...policyDraft,
+          sessionEscrow: {
+            status: "not_authorized",
+            authorizedBudgetTinybar: 0,
+            availableBalanceTinybar: 0
+          }
+        },
         strategyDraft,
-        approvalMode: "preapproved_budget",
         modelConfig: { provider: "rule" }
       })
     });
     assert.equal(unapprovedRunResponse.status, 403);
+    const unapprovedRun = await unapprovedRunResponse.json();
+    assert.equal(unapprovedRun.error, "budget_authorization_required");
 
-    const approvalResponse = await fetch(`${baseUrl}/strategy/approval`, {
+    const authorizeResponse = await fetch(`${baseUrl}/billing/session/authorize`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        intent,
-        policy: policyDraft,
-        strategyDraft,
-        plan
+        sessionBudgetTinybar: policyDraft.sessionBudgetTinybar
       })
     });
-    const userApproval = await approvalResponse.json();
-    assert.equal(approvalResponse.status, 200);
-    assert.equal(userApproval.policyId, policyDraft.id);
+    const sessionEscrow = await authorizeResponse.json();
+    assert.equal(authorizeResponse.status, 200);
+    assert.equal(sessionEscrow.status, "authorized");
+    const authorizedPolicy = {
+      ...policyDraft,
+      sessionEscrow
+    };
 
     const runResponse = await fetch(`${baseUrl}/strategy/run`, {
       method: "POST",
@@ -121,16 +140,14 @@ test("strategy product APIs build intent policy draft strategy draft and plan", 
       body: JSON.stringify({
         message: intent.message,
         intent,
-        policy: policyDraft,
+        policy: authorizedPolicy,
         strategyDraft,
-        approvalMode: "preapproved_budget",
-        userApproval,
         modelConfig: { provider: "rule" }
       })
     });
     const run = await runResponse.json();
     assert.equal(runResponse.status, 200);
-    assert.equal(run.timeline.some((event) => event.step === "payment_signed"), true);
+    assert.equal(run.timeline.some((event) => event.step === "agent_charge_authorized"), true);
   } finally {
     await closeDemoApiServer(server);
     if (previousMode === undefined) delete process.env.HEDERA_PAYMENT_MODE;
@@ -139,5 +156,54 @@ test("strategy product APIs build intent policy draft strategy draft and plan", 
     else process.env.OASIS_MARKET_DATA_MODE = previousMarketMode;
     if (previousLlmMode === undefined) delete process.env.OASIS_LLM_MODE;
     else process.env.OASIS_LLM_MODE = previousLlmMode;
+  }
+});
+
+test("audit messages API returns an empty mock timeline without a real HCS topic", async () => {
+  const previousMode = process.env.HEDERA_PAYMENT_MODE;
+  const previousTopic = process.env.HCS_TOPIC_ID;
+  process.env.HEDERA_PAYMENT_MODE = "mock";
+  process.env.HCS_TOPIC_ID = "mock-topic";
+  const { server, baseUrl } = await createDemoApiServer({ port: 0 });
+
+  try {
+    const auditResponse = await fetch(`${baseUrl}/audit/messages`);
+    const audit = await auditResponse.json();
+
+    assert.equal(auditResponse.status, 200);
+    assert.equal(audit.mode, "mock");
+    assert.equal(audit.hcsTopicId, "mock-topic");
+    assert.deepEqual(audit.messages, []);
+  } finally {
+    await closeDemoApiServer(server);
+    if (previousMode === undefined) delete process.env.HEDERA_PAYMENT_MODE;
+    else process.env.HEDERA_PAYMENT_MODE = previousMode;
+    if (previousTopic === undefined) delete process.env.HCS_TOPIC_ID;
+    else process.env.HCS_TOPIC_ID = previousTopic;
+  }
+});
+
+test("Hedera status API exposes mock account and readiness state", async () => {
+  const previousMode = process.env.HEDERA_PAYMENT_MODE;
+  const previousTopic = process.env.HCS_TOPIC_ID;
+  process.env.HEDERA_PAYMENT_MODE = "mock";
+  process.env.HCS_TOPIC_ID = "mock-topic";
+  const { server, baseUrl } = await createDemoApiServer({ port: 0 });
+
+  try {
+    const statusResponse = await fetch(`${baseUrl}/hedera/status`);
+    const status = await statusResponse.json();
+
+    assert.equal(statusResponse.status, 200);
+    assert.equal(status.mode, "mock");
+    assert.equal(status.network, "testnet");
+    assert.equal(status.hcs.ready, false);
+    assert.equal(status.accounts.some((account) => account.role === "payer"), true);
+  } finally {
+    await closeDemoApiServer(server);
+    if (previousMode === undefined) delete process.env.HEDERA_PAYMENT_MODE;
+    else process.env.HEDERA_PAYMENT_MODE = previousMode;
+    if (previousTopic === undefined) delete process.env.HCS_TOPIC_ID;
+    else process.env.HCS_TOPIC_ID = previousTopic;
   }
 });

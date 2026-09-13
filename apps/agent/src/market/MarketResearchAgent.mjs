@@ -5,9 +5,14 @@ export class MarketResearchAgent {
 
   async research({ state, serviceBaseUrl, policy, ledger, plannedCall }) {
     const request = {
-      agent: "Market Research Agent",
-      action: "request_market_signal",
+      agent: "Market Agent",
+      action: "quote_market_reasoning",
       service: "market-signal",
+      paidAgent: "Market Agent",
+      reasoningTier: plannedCall.reasoningTier,
+      quotedTinybar: plannedCall.quotedTinybar,
+      usage: plannedCall.usage,
+      pricingModel: plannedCall.pricingModel,
       maxFeeTinybar: plannedCall.maxWillingToPayTinybar,
       reason: plannedCall.reason
     };
@@ -15,6 +20,7 @@ export class MarketResearchAgent {
     const result = await this.paidToolClient.callMarketSignal({
       serviceBaseUrl,
       asset: state.asset,
+      locale: state.locale,
       policy,
       ledger,
       plannedCall
@@ -25,9 +31,14 @@ export class MarketResearchAgent {
       transcript: [
         request,
         {
-          agent: "Market Research Agent",
-          action: result.status === "settled" ? "deliver_market_signal" : "market_signal_blocked",
+          agent: "Market Agent",
+          action: result.status === "settled" ? "deliver_market_signal" : "market_agent_charge_blocked",
           service: "market-signal",
+          paidAgent: "Market Agent",
+          reasoningTier: result.quote?.reasoningTier,
+          quotedTinybar: result.quote?.quotedTinybar,
+          usage: result.quote?.usage,
+          pricingModel: result.quote?.pricingModel,
           status: result.status,
           transactionId: result.payment?.transactionId,
           summary: result.result?.signal?.summary ?? result.policyCheck?.reasons?.join("; ")

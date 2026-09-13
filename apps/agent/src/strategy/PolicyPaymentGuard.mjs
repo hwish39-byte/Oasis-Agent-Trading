@@ -1,6 +1,42 @@
-import { checkPaymentAllowed } from "../../../../packages/policy/src/index.mjs";
+import { checkAgentQuoteAllowed, checkPaymentAllowed } from "../../../../packages/policy/src/index.mjs";
 
 export class PolicyPaymentGuard {
+  checkBeforeAgentCharge({ policy, ledger, agentQuote, service, plannedCall }) {
+    const policyDecision = checkAgentQuoteAllowed({
+      policy,
+      ledger,
+      agentQuote,
+      service
+    });
+    const reasons = [...policyDecision.reasons];
+    const requestedTinybar = Number(agentQuote.quotedTinybar);
+
+    if (!plannedCall) {
+      reasons.push(`service ${service} was not planned by Strategy Agent`);
+    } else {
+      if (plannedCall.service !== service) {
+        reasons.push(`planned service ${plannedCall.service} does not match quote service ${service}`);
+      }
+      if (plannedCall.reasoningTier !== agentQuote.reasoningTier) {
+        reasons.push(`quoted reasoning tier ${agentQuote.reasoningTier} does not match Strategy Agent plan ${plannedCall.reasoningTier}`);
+      }
+      if (requestedTinybar !== plannedCall.quotedTinybar) {
+        reasons.push(`quote ${requestedTinybar} tinybar does not match Strategy Agent planned quote ${plannedCall.quotedTinybar}`);
+      }
+      if (requestedTinybar > plannedCall.maxWillingToPayTinybar) {
+        reasons.push(`quote ${requestedTinybar} tinybar exceeds Strategy Agent willingness ${plannedCall.maxWillingToPayTinybar}`);
+      }
+    }
+
+    return {
+      ...policyDecision,
+      allowed: reasons.length === 0,
+      reasons,
+      service,
+      quoteId: agentQuote.quoteId
+    };
+  }
+
   checkBeforePayment({ policy, ledger, paymentRequirement, service, plannedCall }) {
     const policyDecision = checkPaymentAllowed({
       policy,

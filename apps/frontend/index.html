@@ -11,66 +11,68 @@
       <div class="brand">OASIS</div>
       <div class="product">STRATEGY WORKSPACE</div>
       <nav class="nav">
-        <button class="nav-tab is-active" data-page-target="setup">Intent</button>
+        <button class="nav-tab is-active" data-page-target="home">Home</button>
+        <button class="nav-tab" data-page-target="settings">Policy</button>
+        <button class="nav-tab" data-page-target="payment">Payment</button>
+        <button class="nav-tab" data-page-target="setup">Intent</button>
         <button class="nav-tab" data-page-target="plan">Agent Plan</button>
         <button class="nav-tab" data-page-target="run">Run</button>
         <button class="nav-tab" data-page-target="decision">Decision</button>
+        <button class="nav-tab" data-page-target="preferences">Settings</button>
       </nav>
     </header>
 
     <main class="workspace-shell" id="workspace">
-      <div class="page is-active" data-page="setup">
-        <section class="intent-panel">
-        <div class="panel-kicker">USER INTENT -> STRATEGY AGENT</div>
-        <h1>让 Strategy Agent 生成策略</h1>
-        <textarea id="intentInput">我想做 ETH 4h 突破策略，最多花 0.2 HBAR 买研究信息，单次服务别超过 0.05 HBAR，只做模拟交易，风险保守。</textarea>
-        <div class="model-controls">
-          <label>
-            模型服务商
-            <select id="providerInput">
-              <option value="openai" selected>OpenAI</option>
-              <option value="deepseek">DeepSeek</option>
-              <option value="claude">Claude</option>
-              <option value="glm">GLM</option>
-              <option value="rule">Rule fallback</option>
-            </select>
-          </label>
-          <label>
-            模型名
-            <input id="modelInput" value="gpt-5" />
-          </label>
-        </div>
-        <div class="intent-actions">
-          <button class="primary-button" id="analyzeButton">Strategy Agent 生成草案</button>
-        </div>
-        <p class="status-line" id="workspaceStatus">等待输入</p>
+      <div class="page is-active" data-page="home">
+        <section class="home-hero" aria-labelledby="homeTitle">
+          <div class="home-copy">
+            <span class="home-tag">TALK · TEST · PAY · AUDIT</span>
+            <h1 id="homeTitle">用对话，训练你的 AI 交易策略。</h1>
+            <p>
+              告诉 Oasis 你想怎么交易。它会追问、生成规则、判断是否需要 Market/Risk Agent，
+              再把每一次预算检查、模拟执行和审计记录展示给你。
+            </p>
+            <div class="home-actions">
+              <button class="home-primary-action" id="homeStartButton" type="button">训练我的 AI -></button>
+              <button class="home-text-action" id="homePolicyButton" type="button">先设置预算边界</button>
+            </div>
+          </div>
+
+          <aside class="conversation-demo" aria-label="Oasis live strategy conversation">
+            <span class="conversation-label">LIVE AGENT LOOP</span>
+            <div class="chat-card">
+              <strong>你</strong>
+              <p>下次 ETH 突破时果断一点，但不要增加风险。</p>
+            </div>
+            <div class="chat-card">
+              <strong>AI</strong>
+              <p>你想缩短确认时间，还是提高仓位？我会先检查预算和风险边界。</p>
+            </div>
+            <div class="agent-adjustment">
+              <span>AI 理解的调整</span>
+              <strong>确认周期 15m -> 10m</strong>
+              <p>仓位 20 U · 止损 -3% 保持不变 · 仅模拟执行</p>
+            </div>
+          </aside>
         </section>
 
+      </div>
+
+      <div class="page" data-page="settings">
         <section class="policy-panel">
         <div class="panel-title">
-          <span>STRATEGY AGENT: DRAFT POLICY</span>
+          <span>USER POLICY SETTINGS</span>
           <strong id="policyStatus">PENDING</strong>
         </div>
+        <input id="assetInput" type="hidden" value="ETH" />
+        <input id="timeframeInput" type="hidden" value="4h" />
         <div class="policy-grid">
           <label>
-            资产
-            <input id="assetInput" value="ETH" />
-          </label>
-          <label>
-            周期
-            <select id="timeframeInput">
-              <option>15m</option>
-              <option>1h</option>
-              <option selected>4h</option>
-              <option>1d</option>
-            </select>
-          </label>
-          <label>
-            总预算 HBAR
+            每次策略分析预算 HBAR
             <input id="budgetInput" type="number" min="0" step="0.01" value="0.2" />
           </label>
           <label>
-            单次上限 HBAR
+            单次付费 Agent 上限 HBAR
             <input id="perCallInput" type="number" min="0" step="0.01" value="0.05" />
           </label>
           <label>
@@ -88,25 +90,179 @@
             </select>
           </label>
         </div>
+        <div class="model-controls">
+          <label>
+            模型服务商
+            <select id="providerInput">
+              <option value="openai">OpenAI</option>
+              <option value="deepseek" selected>DeepSeek</option>
+              <option value="claude">Claude</option>
+              <option value="glm">GLM</option>
+              <option value="rule">Rule fallback</option>
+            </select>
+          </label>
+          <label>
+            模型名
+            <input id="modelInput" value="deepseek-chat" />
+          </label>
+        </div>
+        <div class="policy-switches">
+          <label class="check-row">
+            <input id="autoPayInput" type="checkbox" checked />
+            <span>在预算边界内自动扣费</span>
+          </label>
+          <label class="check-row">
+            <input id="allowMarketInput" type="checkbox" checked />
+            <span>允许 Market Agent 付费调用</span>
+          </label>
+          <label class="check-row">
+            <input id="allowRiskInput" type="checkbox" checked />
+            <span>允许 Risk Agent 付费调用</span>
+          </label>
+        </div>
+        <div class="hedera-status-card">
+          <div>
+            <span>Budget Boundary</span>
+            <strong id="escrowStatus">未授权</strong>
+            <p id="escrowSummary">授权本次策略预算后，Agent 可在预算边界内自动购买 Market/Risk 服务。</p>
+          </div>
+          <button class="secondary-button" id="authorizeBudgetButton" type="button">授权预算边界</button>
+        </div>
+        </section>
+      </div>
+
+      <div class="page" data-page="payment">
+        <section class="payment-readiness-panel">
+          <div class="panel-title">
+            <span>PAYMENT READINESS</span>
+            <strong id="hederaStatusBadge">未检查</strong>
+          </div>
+          <div class="payment-readiness-head">
+            <h1>支付能力</h1>
+            <p id="hederaStatusSummary">确认 Agent 是否具备在预算边界内自动购买服务的能力，包括用户测试币余额、Hedera testnet 支付通道和 HCS 审计记录。</p>
+          </div>
+          <div class="payment-readiness-grid">
+            <article class="payment-readiness-card">
+              <span>用户测试币余额</span>
+              <strong id="payerBalanceValue">未检查</strong>
+              <p>用于 Agent 在预算边界内支付 Market/Risk 服务。</p>
+            </article>
+            <article class="payment-readiness-card">
+              <span>支付通道</span>
+              <strong id="paymentRailValue">未检查</strong>
+              <p>Hedera testnet / HBAR，经由 Blocky402 结算。</p>
+            </article>
+            <article class="payment-readiness-card">
+              <span>审计记录</span>
+              <strong id="auditReadinessValue">未检查</strong>
+              <p>决策摘要写入 Hedera Consensus Service。</p>
+            </article>
+          </div>
+          <div class="payment-readiness-actions">
+            <button class="secondary-button" id="checkHederaButton" type="button">刷新支付状态</button>
+            <span id="paymentReadinessHint">这不是用户设置项，只展示当前支付运行环境。</span>
+          </div>
+          <div class="technical-detail">
+            <div class="panel-title">
+              <span>TECHNICAL DETAILS</span>
+              <strong>READ ONLY</strong>
+            </div>
+            <div class="hedera-status-grid" id="hederaStatusGrid"></div>
+          </div>
+        </section>
+      </div>
+
+      <div class="page" data-page="preferences">
+        <section class="preferences-panel" aria-labelledby="preferencesTitle">
+          <div class="panel-title">
+            <span>PERSONAL SETTINGS</span>
+            <strong id="preferencesStatus">LOCAL</strong>
+          </div>
+          <div class="preferences-head">
+            <h1 id="preferencesTitle">个性化设置</h1>
+            <p>这些偏好只保存在当前浏览器，不会改变你的交易 policy、钱包授权或 Agent 决策流程。</p>
+          </div>
+          <div class="preferences-grid">
+            <label>
+              界面语言
+              <select id="preferenceLanguageInput">
+                <option value="zh-CN" selected>简体中文</option>
+                <option value="en-US">English</option>
+              </select>
+            </label>
+            <label>
+              金额显示
+              <select id="preferenceUnitInput">
+                <option value="hbar" selected>HBAR</option>
+                <option value="tinybar">Tinybar</option>
+                <option value="usd">USD 估算</option>
+              </select>
+            </label>
+            <label>
+              界面密度
+              <select id="preferenceDensityInput">
+                <option value="comfortable" selected>舒适</option>
+                <option value="compact">紧凑</option>
+              </select>
+            </label>
+            <label>
+              默认启动页
+              <select id="preferenceStartPageInput">
+                <option value="home" selected>Home</option>
+                <option value="settings">Policy</option>
+                <option value="payment">Payment</option>
+                <option value="setup">Intent</option>
+                <option value="plan">Agent Plan</option>
+              </select>
+            </label>
+          </div>
+          <div class="preferences-toggles">
+            <label class="check-row">
+              <input id="preferenceMotionInput" type="checkbox" checked />
+              <span>启用轻微界面动效</span>
+            </label>
+            <label class="check-row">
+              <input id="preferenceRememberInput" type="checkbox" checked />
+              <span>下次打开时使用我的启动页</span>
+            </label>
+          </div>
+          <div class="preferences-actions">
+            <button class="primary-button" id="savePreferencesButton" type="button">保存设置</button>
+            <p id="preferencesSummary">当前使用默认偏好。</p>
+          </div>
+        </section>
+      </div>
+
+      <div class="page" data-page="setup">
+        <section class="strategy-chat-panel">
+          <div class="chat-header">
+            <div>
+              <div class="chat-meta" aria-label="Strategy Agent workflow">
+                <span>Intent</span>
+                <span>Policy guarded</span>
+                <span>Simulation only</span>
+              </div>
+              <h1 class="chat-title">让 Strategy Agent 生成策略</h1>
+            </div>
+            <strong id="strategyStatus">EMPTY</strong>
+          </div>
+          <div class="chat-messages" id="chatMessages" aria-live="polite">
+            <article class="chat-message is-assistant">
+              <span>Strategy Agent</span>
+              <p id="strategyThesis">输入自然语言目标后，Strategy Agent 会生成策略草案、证据需求和风控边界。</p>
+            </article>
+          </div>
+          <div class="chat-composer">
+            <textarea id="intentInput" placeholder="我想做 ETH 4h 突破策略，预算边界内可自动调用必要的 Market Agent 和 Risk Agent，只做模拟交易，风险保守。"></textarea>
+            <button class="primary-button" id="analyzeButton" type="button">Strategy Agent 生成草案</button>
+            <p class="status-line" id="workspaceStatus">等待输入</p>
+          </div>
         </section>
 
-        <section class="strategy-panel">
-        <div class="panel-title">
-          <span>STRATEGY AGENT: DRAFT STRATEGY</span>
-          <strong id="strategyStatus">EMPTY</strong>
-        </div>
-        <h2 id="strategyName">尚未生成策略</h2>
-        <p id="strategyThesis">输入自然语言目标后，Strategy Agent 会生成策略草案、证据需求和风控边界。</p>
-        <div class="list-columns">
-          <div>
-            <h3>Entry</h3>
-            <ul id="entryList"></ul>
-          </div>
-          <div>
-            <h3>Risk</h3>
-            <ul id="riskList"></ul>
-          </div>
-        </div>
+        <section class="strategy-panel is-data-cache" aria-hidden="true">
+          <h2 id="strategyName">尚未生成策略</h2>
+          <ul id="entryList"></ul>
+          <ul id="riskList"></ul>
         </section>
       </div>
 
@@ -138,7 +294,7 @@
 
         <section class="payment-panel">
         <div class="panel-title">
-          <span>USER APPROVAL</span>
+          <span>POLICY AUTHORIZED BILLING</span>
           <strong id="paymentStatus">NO PLAN</strong>
         </div>
         <div id="paymentList" class="payment-list"></div>
@@ -148,10 +304,10 @@
         </div>
         <p id="budgetText">尚未产生付费计划</p>
         <div class="approval-row">
-          <label class="check-row">
-            <input id="policyApprovedInput" type="checkbox" />
-            <span>批准该 policy，并允许 Strategy Agent 在预算内运行</span>
-          </label>
+          <div class="authorization-summary">
+            <strong id="planAuthorizationStatus">等待预算授权</strong>
+            <span id="planAuthorizationSummary">请先在 Policy 页授权预算边界。</span>
+          </div>
           <button class="primary-button approval-run-button" id="runButton" disabled>运行完整决策循环</button>
         </div>
         </section>
@@ -182,12 +338,12 @@
           <strong id="decisionBadge">PENDING</strong>
         </div>
         <h2 id="decisionTitle">等待运行</h2>
-        <p id="decisionReason">批准 policy 后运行 Agent。</p>
+        <p id="decisionReason">授权预算边界后运行 Agent。</p>
         <div class="signal-box">
           <span>MARKET SIGNAL</span>
           <div class="signal-score">
             <strong id="signalScore">--</strong>
-            <small>evidence score</small>
+            <small>market score</small>
           </div>
           <p id="signalSummary">尚未返回证据。</p>
         </div>
@@ -201,17 +357,19 @@
             <strong id="marketSource">waiting</strong>
           </div>
         </div>
+        <div class="signal-box">
+          <span>EXECUTION SIMULATION</span>
+          <div class="signal-score">
+            <strong id="executionStatus">--</strong>
+            <small>simulation only</small>
+          </div>
+          <p id="executionSummary">等待 Execution Agent 模拟执行。</p>
+        </div>
         <div class="audit-box">
           <span>AUDIT</span>
           <code id="auditHash">waiting</code>
         </div>
         </section>
-      </div>
-
-      <div class="pager-controls" aria-label="Page controls">
-        <button class="ghost-page-button" id="prevPageButton">上一页</button>
-        <span id="pageStatus">Setup / 1 of 4</span>
-        <button class="primary-page-button" id="nextPageButton">下一页</button>
       </div>
     </main>
 

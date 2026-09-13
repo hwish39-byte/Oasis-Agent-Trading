@@ -72,7 +72,13 @@ export function assertToolPlan(value) {
     assertObject(call, `ToolCallPlan.toolCalls[${index}]`);
     assertString(call.service, `toolCalls[${index}].service`);
     assertString(call.reason, `toolCalls[${index}].reason`);
+    assertString(call.agent, `toolCalls[${index}].agent`);
+    assertString(call.reasoningTier, `toolCalls[${index}].reasoningTier`);
+    assertInteger(call.quotedTinybar, `toolCalls[${index}].quotedTinybar`);
     assertInteger(call.maxWillingToPayTinybar, `toolCalls[${index}].maxWillingToPayTinybar`);
+    if (call.quotedTinybar < 0) {
+      throw new Error(`toolCalls[${index}].quotedTinybar must be >= 0`);
+    }
     if (call.maxWillingToPayTinybar < 0) {
       throw new Error(`toolCalls[${index}].maxWillingToPayTinybar must be >= 0`);
     }

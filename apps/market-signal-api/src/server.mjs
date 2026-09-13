@@ -9,10 +9,10 @@ import {
   getHederaConfig,
   settlePaymentForResource
 } from "../../../packages/hedera/src/index.mjs";
+import { quotePaidAgentCall, usageFromSearchParams } from "../../../packages/shared/src/pricing.mjs";
 import { createDefaultMarketDataProvider } from "../../agent/src/strategy/MarketContextBuilder.mjs";
 
 const SERVICE_NAME = "market-signal";
-const PRICE_TINYBAR = 3_000_000;
 
 export async function createMarketSignalServer({
   port = 4021,
@@ -22,7 +22,7 @@ export async function createMarketSignalServer({
   const config = getHederaConfig();
   const supported = await fetchBlocky402SupportedRequirements({
     service: SERVICE_NAME,
-    amountTinybar: PRICE_TINYBAR,
+    amountTinybar: quotePaidAgentCall({ service: SERVICE_NAME, reasoningTier: "standard" }).quotedTinybar,
     description: `${SERVICE_NAME} pay-per-request result`
   });
   const pendingRequirements = new Map();
@@ -44,6 +44,11 @@ export async function createMarketSignalServer({
       const asset = url.searchParams.get("asset") ?? "ETH";
       const timeframe = url.searchParams.get("timeframe") ?? "4h";
       const strategyType = url.searchParams.get("strategy") ?? "breakout";
+      const locale = url.searchParams.get("locale") ?? "en-US";
+      const reasoningTier = normalizeTier(url.searchParams.get("tier"));
+      const usage = usageFromSearchParams({ service: SERVICE_NAME, reasoningTier, searchParams: url.searchParams });
+      const quote = quotePaidAgentCall({ service: SERVICE_NAME, reasoningTier, usage });
+      const priceTinybar = quote.quotedTinybar;
       const paymentHeader = request.headers["x-payment"];
 
       if (!paymentHeader) {
@@ -52,7 +57,7 @@ export async function createMarketSignalServer({
           requestId,
           service: SERVICE_NAME,
           receiverAccountId: config.serviceAccountId,
-          priceTinybar: PRICE_TINYBAR,
+          priceTinybar,
           network: "hedera:testnet",
           feePayer: supported?.feePayer
         });
@@ -63,7 +68,8 @@ export async function createMarketSignalServer({
       }
 
       const paymentPayload = decodePaymentHeader(paymentHeader);
-      const expectedRequirement = pendingRequirements.get(paymentPayload.requestId);
+      const expectedRequirement = pendingRequirements.get(paymentPayload.requestId)
+        ?? expectedRequirementFromPaymentPayload({ paymentPayload, service: SERVICE_NAME, config, priceTinybar });
 
       if (!expectedRequirement) {
         sendJson(response, 402, {
@@ -76,13 +82,18 @@ export async function createMarketSignalServer({
       const settlement = await settlePaymentForResource({ paymentPayload, expectedRequirement });
       pendingRequirements.delete(paymentPayload.requestId);
 
+      const signal = await signalProvider.getSignal({ asset, timeframe, strategyType });
+
       sendJson(response, 200, {
         service: SERVICE_NAME,
         asset,
         timeframe,
-        priceTinybar: PRICE_TINYBAR,
+        reasoningTier,
+        priceTinybar,
+        usage,
+        pricingModel: quote.pricingModel,
         payment: settlement,
-        signal: await signalProvider.getSignal({ asset, timeframe, strategyType })
+        signal: localizeSignal(signal, { locale, asset, timeframe, strategyType })
       });
     } catch (error) {
       const status = error.statusCode ?? 500;
@@ -107,6 +118,23 @@ export async function createMarketSignalServer({
   };
 }
 
+function localizeSignal(signal, { locale, asset, timeframe, strategyType }) {
+  if (locale !== "zh-CN") return signal;
+  return {
+    ...signal,
+    summary: signal.summary?.includes("Static smoke-test")
+      ? "真实 x402/Hedera 结算完成后返回的静态冒烟测试市场信号。"
+      : `${asset} ${timeframe} ${translateStrategyType(strategyType)}市场信号已返回，置信度 ${signal.confidence ?? "待评估"}。`
+  };
+}
+
+function translateStrategyType(value) {
+  if (value === "mean_reversion") return "均值回归";
+  if (value === "momentum") return "趋势动量";
+  if (value === "range") return "区间";
+  return "突破";
+}
+
 export async function closeMarketSignalServer(server) {
   await new Promise((resolveClose, rejectClose) => {
     server.close((error) => {
@@ -114,6 +142,26 @@ export async function closeMarketSignalServer(server) {
       else resolveClose();
     });
   });
+}
+
+function normalizeTier(value) {
+  return ["basic", "standard", "deep"].includes(value) ? value : "standard";
+}
+
+function expectedRequirementFromPaymentPayload({ paymentPayload, service, config, priceTinybar }) {
+  const accepted = paymentPayload.paymentPayload?.accepted ?? paymentPayload.accepted;
+  if (accepted) return accepted;
+
+  if (Number(paymentPayload.amount) !== priceTinybar) return null;
+  if (paymentPayload.payTo !== config.serviceAccountId) return null;
+
+  return buildX402PaymentRequired({
+    requestId: paymentPayload.requestId,
+    service,
+    receiverAccountId: config.serviceAccountId,
+    priceTinybar,
+    network: "hedera:testnet"
+  }).accepts[0];
 }
 
 function sendJson(response, statusCode, body) {

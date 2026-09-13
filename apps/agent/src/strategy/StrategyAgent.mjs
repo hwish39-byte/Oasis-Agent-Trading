@@ -1,5 +1,7 @@
-import { createBudgetLedger, defaultUserPolicy } from "../../../../packages/policy/src/index.mjs";
+import { createBudgetLedger, defaultUserPolicy, normalizeUserPolicy } from "../../../../packages/policy/src/index.mjs";
 import { createRequestId, hbarToTinybar, tinybarToHbar } from "../../../../packages/shared/src/index.mjs";
+import { listPaidAgentQuotes } from "../../../../packages/shared/src/pricing.mjs";
+import { getHederaConfig } from "../../../../packages/hedera/src/index.mjs";
 import { ExecutionAgent } from "../execution/ExecutionAgent.mjs";
 import { MarketResearchAgent } from "../market/MarketResearchAgent.mjs";
 import { RiskAgent } from "../risk/RiskAgent.mjs";
@@ -17,17 +19,7 @@ import { X402PaidToolClient } from "./X402PaidToolClient.mjs";
 import { createExecutionProposal, createResearchRequest, createRiskChallengeRequest } from "./protocols.mjs";
 import { STRATEGY_STEPS, createStrategyState } from "./schemas.mjs";
 
-const SERVICE_QUOTES = Object.freeze({
-  "market-signal": [
-    { tier: "basic", priceTinybar: 1_000_000, depth: "fast confirmation" },
-    { tier: "standard", priceTinybar: 3_000_000, depth: "breakout and volume confirmation" },
-    { tier: "deep", priceTinybar: 7_000_000, depth: "multi-timeframe confirmation" }
-  ],
-  "risk-challenge": [
-    { tier: "standard", priceTinybar: 2_000_000, depth: "adversarial downside review" },
-    { tier: "deep", priceTinybar: 6_000_000, depth: "stress scenarios and invalidation checks" }
-  ]
-});
+const SERVICE_QUOTES = Object.freeze(listPaidAgentQuotes());
 
 export class StrategyAgent {
   constructor({
@@ -45,9 +37,11 @@ export class StrategyAgent {
     memoryManager = new MemoryManager(),
     reviewScheduler = new ReviewScheduler(),
     auditLogger = new AuditLogger(),
-    observability = new Observability()
+    observability = new Observability(),
+    locale = "zh-CN"
   } = {}) {
-    this.policy = policy;
+    this.policy = withCurrentHederaAccounts(policy);
+    this.locale = locale;
     this.marketContextBuilder = marketContextBuilder;
     this.reasoner = reasoner;
     this.toolPlanner = toolPlanner;
@@ -64,32 +58,59 @@ export class StrategyAgent {
     this.observability = observability;
   }
 
-  async parseIntent({ message, modelConfig } = {}) {
-    if (!shouldUseProductLlm(modelConfig)) return parseStrategyIntent(message);
-    return parseIntentWithModel(message, { modelConfig });
+  async parseIntent({ message, modelConfig, locale = this.locale } = {}) {
+    if (!shouldUseProductLlm(modelConfig)) return parseStrategyIntent(message, { locale });
+    return parseIntentWithModel(message, { modelConfig, locale });
   }
 
   draftPolicy({ intent } = {}) {
-    const allowedServices = ["market-signal"];
+    const allowedPaidAgents = ["market-signal"];
     if (intent.riskPreference !== "aggressive") {
-      allowedServices.push("risk-challenge");
+      allowedPaidAgents.push("risk-challenge");
     }
+    const sessionBudgetTinybar = intent.sessionBudgetTinybar ?? intent.dailyResearchBudgetTinybar;
+    const maxPaidAgentCallTinybar = intent.maxPaidAgentCallTinybar ?? intent.maxPaymentPerCallTinybar;
 
     return {
       ...defaultUserPolicy,
       id: `policy_${intent.asset.toLowerCase()}_${intent.timeframe}_${intent.strategyType}`,
       targetAsset: intent.asset,
-      dailyBudgetTinybar: intent.dailyResearchBudgetTinybar,
-      maxPaymentPerCallTinybar: intent.maxPaymentPerCallTinybar,
-      allowedServices,
+      sessionBudgetTinybar,
+      maxPaidAgentCallTinybar,
+      allowedPaidAgents,
+      paidAgentBudgetsTinybar: {
+        "market-signal": Math.floor(sessionBudgetTinybar * 0.6),
+        "risk-challenge": Math.floor(sessionBudgetTinybar * 0.3)
+      },
+      autoPayEnabled: true,
+      allowance: {
+        ...defaultUserPolicy.allowance,
+        ...currentPolicyAccounts(),
+        allowanceTinybar: sessionBudgetTinybar
+      },
+      sessionEscrow: {
+        ...defaultUserPolicy.sessionEscrow,
+        sessionId: null,
+        payerAccountId: currentPolicyAccounts().ownerAccountId,
+        authorizedBudgetTinybar: 0,
+        availableBalanceTinybar: 0,
+        spentTinybar: 0,
+        fundingReference: null,
+        authorizedAt: null,
+        status: "not_authorized"
+      },
+      dailyBudgetTinybar: sessionBudgetTinybar,
+      maxPaymentPerCallTinybar: maxPaidAgentCallTinybar,
+      allowedServices: allowedPaidAgents,
       serviceBudgetsTinybar: {
-        "market-signal": Math.floor(intent.dailyResearchBudgetTinybar * 0.6),
-        "risk-challenge": Math.floor(intent.dailyResearchBudgetTinybar * 0.3)
+        "market-signal": Math.floor(sessionBudgetTinybar * 0.6),
+        "risk-challenge": Math.floor(sessionBudgetTinybar * 0.3)
       },
       executionMode: intent.executionMode === "simulation" ? "simulation" : "simulation",
       riskRules: [
         `${intent.riskPreference}_risk_profile`,
-        "policy_guard_required_before_payment",
+        "user_policy_required_before_paid_agent_billing",
+        "hedera_allowance_required_for_auto_pay",
         "risk_guard_required_before_execution",
         "execution_agent_simulation_only"
       ],
@@ -97,12 +118,12 @@ export class StrategyAgent {
     };
   }
 
-  async draftStrategy({ intent, policy, modelConfig } = {}) {
-    if (!shouldUseProductLlm(modelConfig)) return buildStrategyDraft({ intent, policy });
-    return buildStrategyDraftWithModel({ intent, policy, modelConfig });
+  async draftStrategy({ intent, policy, modelConfig, locale = this.locale } = {}) {
+    if (!shouldUseProductLlm(modelConfig)) return buildStrategyDraft({ intent, policy, locale });
+    return buildStrategyDraftWithModel({ intent, policy, modelConfig, locale });
   }
 
-  async planEvidence({ intent, policy, modelConfig } = {}) {
+  async planEvidence({ intent, policy, modelConfig, locale = this.locale } = {}) {
     const reasoner = createDefaultReasoner({
       provider: modelConfig?.provider,
       model: modelConfig?.model
@@ -120,9 +141,10 @@ export class StrategyAgent {
       intent,
       policy,
       marketContext,
-      memory
+      memory,
+      locale
     });
-    const toolPlan = this.toolPlanner.plan({ policy, hypothesis, marketContext, memory });
+    const toolPlan = this.toolPlanner.plan({ policy, hypothesis, marketContext, memory, intent, locale });
 
     return {
       intent,
@@ -133,7 +155,7 @@ export class StrategyAgent {
         reason: toolPlan.reason,
         plannedToolCalls: toolPlan.toolCalls.map((call) => ({
           ...call,
-          quotedPriceTinybar: quoteFor(call.service, call.maxWillingToPayTinybar)?.priceTinybar ?? call.maxWillingToPayTinybar,
+          quotedPriceTinybar: call.quotedTinybar,
           expectedDecisionImpact: estimateDecisionImpact(hypothesis, call.service),
           recommended: call.required ? true : "optional"
         }))
@@ -163,6 +185,7 @@ export class StrategyAgent {
     const startedAt = Date.now();
     const runId = createRequestId("strategy_run");
     const state = createStrategyState({ runId, policy: this.policy, asset });
+    state.locale = this.locale;
     state.userMessage = userMessage ?? intent?.message ?? null;
     state.intent = intent ?? null;
     state.strategyDraft = strategyDraft ?? null;
@@ -194,15 +217,27 @@ export class StrategyAgent {
         strategyDraft: state.strategyDraft,
         policy: this.policy,
         marketContext: state.marketContext,
-        memory: state.memory
+        memory: state.memory,
+        locale: this.locale
       });
     });
+
+    if (state.hypothesis.llmFallback) {
+      state.timeline.push({
+        step: "llm_fallback",
+        provider: state.hypothesis.llmFallback.provider,
+        reason: state.hypothesis.llmFallback.reason,
+        fallback: "rule_based_fallback"
+      });
+    }
 
     state.timeline.push({
       step: "strategy_candidate",
       agent: "Strategy Agent",
       hypothesis: state.hypothesis,
-      message: `${state.hypothesis.asset} ${state.hypothesis.setup} ${state.hypothesis.direction} hypothesis at ${state.hypothesis.initialConfidence} confidence.`
+      message: this.locale === "zh-CN"
+        ? `${state.hypothesis.asset} ${state.hypothesis.setup} ${state.hypothesis.direction} 假设，初始置信度 ${state.hypothesis.initialConfidence}。`
+        : `${state.hypothesis.asset} ${state.hypothesis.setup} ${state.hypothesis.direction} hypothesis at ${state.hypothesis.initialConfidence} confidence.`
     });
     state.committeeTranscript.push({
       agent: "Strategy Agent",
@@ -211,7 +246,9 @@ export class StrategyAgent {
       direction: state.hypothesis.direction,
       setup: state.hypothesis.setup,
       confidence: state.hypothesis.initialConfidence,
-      message: "Strategy Agent proposes a candidate and asks the committee whether paid evidence is justified."
+      message: this.locale === "zh-CN"
+        ? "Strategy Agent 提出候选策略，并询问委员会是否值得购买付费证据。"
+        : "Strategy Agent proposes a candidate and asks the committee whether paid evidence is justified."
     });
 
     await this.step(state, "plan_evidence_needed", () => ({
@@ -224,7 +261,10 @@ export class StrategyAgent {
         policy: this.policy,
         hypothesis: state.hypothesis,
         marketContext: state.marketContext,
-        memory: state.memory
+        memory: state.memory,
+        intent: state.intent,
+        userMessage: state.userMessage,
+        locale: this.locale
       });
     });
 
@@ -238,6 +278,9 @@ export class StrategyAgent {
       action: message.type,
       toAgent: message.toAgent,
       service: message.type === "ResearchRequest" ? "market-signal" : "risk-challenge",
+      paidAgent: message.type === "ResearchRequest" ? "Market Agent" : "Risk Agent",
+      reasoningTier: message.reasoningTier,
+      quotedTinybar: message.quotedTinybar,
       maxFeeTinybar: message.maxFeeTinybar,
       reason: message.reason
     })));
@@ -264,7 +307,7 @@ export class StrategyAgent {
     });
 
     state.decision = await this.step(state, "compose_strategy_decision", () => {
-      return this.decisionComposer.compose({ state });
+      return this.decisionComposer.compose({ state, locale: this.locale });
     });
 
     const finalCheck = await this.step(state, "final_policy_risk_check", () => {
@@ -285,8 +328,8 @@ export class StrategyAgent {
       orderId: state.executionResult.simulatedOrder?.orderId,
       blockingReasons: state.executionResult.blockingReasons,
       message: state.executionResult.status === "simulated"
-        ? "Execution Agent accepted the policy-approved simulation request."
-        : "Execution Agent did not create an order because final checks did not authorize execution."
+        ? this.locale === "zh-CN" ? "Execution Agent 接受了 policy 批准的模拟请求。" : "Execution Agent accepted the policy-approved simulation request."
+        : this.locale === "zh-CN" ? "最终检查未授权执行，Execution Agent 未创建订单。" : "Execution Agent did not create an order because final checks did not authorize execution."
     });
 
     state.audit = await this.step(state, "write_audit", () => {
@@ -357,30 +400,38 @@ export class StrategyAgent {
 
   recordPaymentEvents({ state, result }) {
     state.timeline.push({
-      step: "payment_required",
+      step: "agent_quote",
       service: result.service,
-      price: `${tinybarToHbar(result.requirement.amount)} HBAR`,
-      network: result.requirement.network,
-      receiver: result.requirement.payTo,
-      asset: result.requirement.asset,
-      scheme: result.requirement.scheme,
+      paidAgent: result.service === "market-signal" ? "Market Agent" : "Risk Agent",
+      reasoningTier: result.quote.reasoningTier,
+      price: `${tinybarToHbar(result.quote.quotedTinybar)} HBAR`,
+      quoteId: result.quote.quoteId,
+      reason: result.quote.reason,
+      usage: result.quote.usage,
+      pricingModel: result.quote.pricingModel,
+      settlementRail: "x402/hedera",
       x402Version: result.paymentRequired.x402Version
     });
 
     state.policyChecks.push(result.policyCheck);
     state.committeeTranscript.push({
       agent: "User Policy",
-      action: result.policyCheck.allowed ? "approve_payment" : "reject_payment",
+      action: result.policyCheck.allowed ? "approve_agent_charge" : "reject_agent_charge",
       service: result.service,
-      requestId: result.policyCheck.requestId,
+      paidAgent: result.service === "market-signal" ? "Market Agent" : "Risk Agent",
+      quoteId: result.policyCheck.quoteId,
+      reasoningTier: result.policyCheck.reasoningTier,
       amountTinybar: result.policyCheck.requestedTinybar,
+      usage: result.quote.usage,
+      pricingModel: result.quote.pricingModel,
       remainingTinybar: result.policyCheck.remainingTinybar,
       reasons: result.policyCheck.reasons
     });
     state.timeline.push({
-      step: "policy_check",
+      step: "budget_check",
       allowed: result.policyCheck.allowed,
       remainingBudget: `${tinybarToHbar(result.policyCheck.remainingTinybar)} HBAR`,
+      budgetBoundary: result.policyCheck.budgetBoundary,
       reasons: result.policyCheck.reasons
     });
 
@@ -389,9 +440,10 @@ export class StrategyAgent {
     }
 
     state.timeline.push({
-      step: "payment_signed",
+      step: "agent_charge_authorized",
       service: result.service,
       payer: result.paymentPayload.payer,
+      spender: result.paymentPayload.spender,
       facilitator: result.paymentPayload.facilitatorUrl,
       mode: result.paymentPayload.mode,
       x402Version: result.paymentPayload.x402Version
@@ -400,14 +452,19 @@ export class StrategyAgent {
     state.payments.push({
       service: result.service,
       status: result.status,
-      requestId: result.requirement.extra.requestId,
-      amountTinybar: Number(result.requirement.amount),
-      payment: result.payment
+      quoteId: result.quote.quoteId,
+      agent: result.quote.agent,
+      reasoningTier: result.quote.reasoningTier,
+      amountTinybar: Number(result.quote.quotedTinybar),
+      payment: result.payment,
+      charge: result.charge
     });
 
     state.timeline.push({
-      step: "payment_settled",
+      step: "agent_charge_settled",
       service: result.service,
+      quoteId: result.quote.quoteId,
+      amountTinybar: result.quote.quotedTinybar,
       transactionId: result.payment.transactionId,
       settledAt: result.payment.settledAt
     });
@@ -428,14 +485,21 @@ export class StrategyAgent {
   }
 
   toDemoResult({ state, storedMemory }) {
+    const normalizedPolicy = normalizeUserPolicy(this.policy);
     return {
       finalDecision: state.decision.action,
       reason: state.decision.reason,
-      policy: this.policy,
+      policy: normalizedPolicy,
       budget: {
         spentTinybar: state.ledger.spentTinybar,
         spentHbar: tinybarToHbar(state.ledger.spentTinybar),
-        remainingHbar: tinybarToHbar(this.policy.dailyBudgetTinybar - state.ledger.spentTinybar)
+        remainingHbar: tinybarToHbar(normalizedPolicy.sessionBudgetTinybar - state.ledger.spentTinybar),
+        sessionBudgetTinybar: normalizedPolicy.sessionBudgetTinybar,
+        sessionBudgetHbar: tinybarToHbar(normalizedPolicy.sessionBudgetTinybar),
+        maxPaidAgentCallTinybar: normalizedPolicy.maxPaidAgentCallTinybar,
+        maxPaidAgentCallHbar: tinybarToHbar(normalizedPolicy.maxPaidAgentCallTinybar),
+        allowedPaidAgents: normalizedPolicy.allowedPaidAgents,
+        charges: state.ledger.charges
       },
       payment: state.payments.at(-1)?.payment ?? null,
       audit: state.audit,
@@ -458,13 +522,38 @@ export class StrategyAgent {
   }
 }
 
-function parseStrategyIntent(message) {
+function withCurrentHederaAccounts(policy) {
+  const normalized = normalizeUserPolicy(policy);
+  return {
+    ...normalized,
+    allowance: {
+      ...normalized.allowance,
+      ...currentPolicyAccounts()
+    },
+    sessionEscrow: {
+      ...normalized.sessionEscrow,
+      payerAccountId: currentPolicyAccounts().ownerAccountId
+    }
+  };
+}
+
+function currentPolicyAccounts() {
+  const config = getHederaConfig();
+  return {
+    ownerAccountId: config.userPayerAccountId,
+    spenderAccountId: config.spenderAccountId,
+    merchantAccountId: config.merchantAccountId
+  };
+}
+
+function parseStrategyIntent(message, { locale = "zh-CN" } = {}) {
   const text = String(message ?? "").trim();
+  const isZh = locale === "zh-CN";
   if (!text) {
     return {
       status: "needs_clarification",
       missingFields: ["message"],
-      questions: ["请描述你想交易的资产、周期、预算和风险偏好。"]
+      questions: [isZh ? "请描述你想交易的资产、周期、预算和风险偏好。" : "Describe the asset, timeframe, budget, and risk preference you want to trade with."]
     };
   }
 
@@ -489,40 +578,65 @@ function parseStrategyIntent(message) {
     strategyType,
     riskPreference,
     dailyResearchBudgetTinybar: hbarToTinybar(budgetHbar),
+    sessionBudgetTinybar: hbarToTinybar(budgetHbar),
     maxPaymentPerCallTinybar: hbarToTinybar(maxPaymentHbar),
+    maxPaidAgentCallTinybar: hbarToTinybar(maxPaymentHbar),
     executionMode,
     missingFields,
-    questions: buildClarifyingQuestions(missingFields)
+    questions: buildClarifyingQuestions(missingFields, { locale })
   };
 }
 
-function buildStrategyDraft({ intent, policy }) {
-  const setupName = `${intent.asset} ${intent.timeframe.toUpperCase()} ${titleCase(intent.strategyType)} Strategy`;
+function buildStrategyDraft({ intent, policy, locale = "zh-CN" }) {
+  const isZh = locale === "zh-CN";
+  const setupName = isZh
+    ? `${intent.asset} ${intent.timeframe.toUpperCase()} ${translateStrategyType(intent.strategyType)}策略`
+    : `${intent.asset} ${intent.timeframe.toUpperCase()} ${titleCase(intent.strategyType)} Strategy`;
 
   return {
     name: setupName,
     asset: intent.asset,
     timeframe: intent.timeframe,
     strategyType: intent.strategyType,
-    thesis: `Only consider ${intent.asset} exposure when ${intent.strategyType} evidence survives paid market confirmation and policy checks.`,
-    entryConditions: [
-      `${intent.timeframe} market structure supports the ${intent.strategyType} thesis`,
-      "paid market signal does not contradict the thesis",
-      "evidence score is above the execution threshold"
-    ],
-    exitConditions: [
-      "market confirmation weakens",
-      "risk challenge blocks the setup",
-      "policy budget or risk boundary is exceeded"
-    ],
-    riskControls: [
-      `daily research budget ${tinybarToHbar(policy.dailyBudgetTinybar)} HBAR`,
-      `single service limit ${tinybarToHbar(policy.maxPaymentPerCallTinybar)} HBAR`,
-      "simulation-only execution boundary"
-    ],
+    thesis: isZh
+      ? `只有当 ${intent.asset} 的${translateStrategyType(intent.strategyType)}证据通过付费市场确认和 policy 检查后，才考虑增加模拟敞口。`
+      : `Only consider ${intent.asset} exposure when ${intent.strategyType} evidence survives paid market confirmation and policy checks.`,
+    entryConditions: isZh
+      ? [
+          `${intent.timeframe} 市场结构支持${translateStrategyType(intent.strategyType)}假设`,
+          "付费市场信号不反驳该假设",
+          "证据评分高于模拟执行阈值"
+        ]
+      : [
+          `${intent.timeframe} market structure supports the ${intent.strategyType} thesis`,
+          "paid market signal does not contradict the thesis",
+          "evidence score is above the execution threshold"
+        ],
+    exitConditions: isZh
+      ? [
+          "市场确认转弱",
+          "风险挑战阻止该设置",
+          "policy 预算或风险边界被触发"
+        ]
+      : [
+          "market confirmation weakens",
+          "risk challenge blocks the setup",
+          "policy budget or risk boundary is exceeded"
+        ],
+    riskControls: isZh
+      ? [
+          `单次策略付费 Agent 预算 ${tinybarToHbar(policy.sessionBudgetTinybar ?? policy.dailyBudgetTinybar)} HBAR`,
+          `单次付费 Agent 调用上限 ${tinybarToHbar(policy.maxPaidAgentCallTinybar ?? policy.maxPaymentPerCallTinybar)} HBAR`,
+          "仅允许模拟执行"
+        ]
+      : [
+          `per-analysis paid agent budget ${tinybarToHbar(policy.sessionBudgetTinybar ?? policy.dailyBudgetTinybar)} HBAR`,
+          `single paid agent call limit ${tinybarToHbar(policy.maxPaidAgentCallTinybar ?? policy.maxPaymentPerCallTinybar)} HBAR`,
+          "simulation-only execution boundary"
+        ],
     requiredEvidence: intent.riskPreference === "conservative"
-      ? ["market-signal", "risk-challenge when signal is bullish"]
-      : ["market-signal"],
+      ? ["Market Agent", "Risk Agent when signal is bullish"]
+      : ["Market Agent"],
     status: "draft"
   };
 }
@@ -534,16 +648,21 @@ function shouldUseProductLlm(modelConfig) {
   return true;
 }
 
-async function parseIntentWithModel(message, { modelConfig } = {}) {
+async function parseIntentWithModel(message, { modelConfig, locale = "zh-CN" } = {}) {
   const text = String(message ?? "").trim();
-  if (!text) return parseStrategyIntent(text);
+  if (!text) return parseStrategyIntent(text, { locale });
   const modelClient = createJsonModelClient(modelConfig);
 
+  try {
   const payload = await modelClient.generateJson({
     name: "strategy_intent",
-    system: "You parse natural-language crypto trading goals into safe structured strategy intent. Preserve the user's asset, timeframe, strategy style, budget, and risk preference. Return JSON only.",
+    system: [
+      "You parse natural-language crypto trading goals into safe structured strategy intent. Preserve the user's asset, timeframe, strategy style, budget, and risk preference. Return JSON only.",
+      locale === "zh-CN" ? "Write question and message free-text in Simplified Chinese. Keep enum values unchanged." : "Write free-text in English."
+    ].join(" "),
     user: {
       message: text,
+      locale,
       defaults: {
         asset: "ETH",
         timeframe: "4h",
@@ -551,6 +670,7 @@ async function parseIntentWithModel(message, { modelConfig } = {}) {
         riskPreference: "balanced",
         dailyResearchBudgetTinybar: 20_000_000,
         maxPaymentPerCallTinybar: 5_000_000,
+        maxPaidAgentCallTinybar: 5_000_000,
         executionMode: "simulation"
       },
       supportedAssets: ["BTC", "ETH", "SOL", "HBAR", "LINK", "AVAX", "BNB", "XRP"],
@@ -570,6 +690,7 @@ async function parseIntentWithModel(message, { modelConfig } = {}) {
         riskPreference: { type: "string", enum: ["conservative", "balanced", "aggressive"] },
         dailyResearchBudgetTinybar: { type: "integer" },
         maxPaymentPerCallTinybar: { type: "integer" },
+        maxPaidAgentCallTinybar: { type: "integer" },
         executionMode: { type: "string", enum: ["simulation", "requires_manual_approval"] },
         missingFields: { type: "array", items: { type: "string" } },
         questions: { type: "array", items: { type: "string" } }
@@ -596,14 +717,29 @@ async function parseIntentWithModel(message, { modelConfig } = {}) {
     message: text,
     parsedBy: modelClient.id
   };
+  } catch (error) {
+    return {
+      ...parseStrategyIntent(text, { locale }),
+      parsedBy: `${modelClient.id}->rule_based_fallback`,
+      llmFallback: {
+        provider: modelClient.id,
+        reason: error.message
+      }
+    };
+  }
 }
 
-async function buildStrategyDraftWithModel({ intent, policy, modelConfig }) {
+async function buildStrategyDraftWithModel({ intent, policy, modelConfig, locale = "zh-CN" }) {
   const modelClient = createJsonModelClient(modelConfig);
+  try {
   const payload = await modelClient.generateJson({
     name: "strategy_draft",
-    system: "You are a Strategy Agent drafting a crypto trading strategy from a user's intent and policy. The strategy must match the user's natural-language idea and remain simulation-only.",
+    system: [
+      "You are a Strategy Agent drafting a crypto trading strategy from a user's intent and policy. The strategy must match the user's natural-language idea and remain simulation-only.",
+      locale === "zh-CN" ? "Write all free-text fields in Simplified Chinese. Keep service names and enum-like identifiers unchanged only when they are IDs." : "Write all free-text fields in English."
+    ].join(" "),
     user: {
+      locale,
       intent,
       policy,
       availablePaidServices: {
@@ -652,6 +788,16 @@ async function buildStrategyDraftWithModel({ intent, policy, modelConfig }) {
     asset: String(payload.asset).toUpperCase(),
     generatedBy: modelClient.id
   };
+  } catch (error) {
+    return {
+      ...buildStrategyDraft({ intent, policy, locale }),
+      generatedBy: `${modelClient.id}->rule_based_fallback`,
+      llmFallback: {
+        provider: modelClient.id,
+        reason: error.message
+      }
+    };
+  }
 }
 
 function quoteFor(service, maxTinybar) {
@@ -700,11 +846,27 @@ function extractBudgetHbar(text, keywords, { allowGeneric = true } = {}) {
   return generic ? Number(generic) : null;
 }
 
-function buildClarifyingQuestions(missingFields) {
+function buildClarifyingQuestions(missingFields, { locale = "zh-CN" } = {}) {
+  if (locale !== "zh-CN") {
+    const questions = [];
+    if (missingFields.includes("asset")) questions.push("Which asset do you want to analyze? For example ETH, BTC, or HBAR.");
+    if (missingFields.includes("timeframe")) questions.push("Which trading timeframe should I use? For example 1h, 4h, or 1d.");
+    return questions;
+  }
+
   const questions = [];
   if (missingFields.includes("asset")) questions.push("你想分析哪个资产？例如 ETH、BTC 或 HBAR。");
   if (missingFields.includes("timeframe")) questions.push("你希望使用哪个交易周期？例如 1h、4h 或 1d。");
   return questions;
+}
+
+function translateStrategyType(value) {
+  if (value === "mean_reversion") return "均值回归";
+  if (value === "momentum") return "趋势动量";
+  if (value === "range") return "区间";
+  if (value === "event_driven") return "事件驱动";
+  if (value === "scalping") return "短线";
+  return "突破";
 }
 
 function titleCase(value) {

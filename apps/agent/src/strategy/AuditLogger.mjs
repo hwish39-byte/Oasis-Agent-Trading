@@ -7,21 +7,33 @@ export class AuditLogger {
     const modelOutputHash = hashJson(state.hypothesis);
     const finalDecisionHash = hashJson(state.decision);
     const payment = state.payments.at(-1)?.payment ?? null;
-    const audit = await writeAuditRecord({
-      requestId: state.runId,
-      decision: {
-        ...state.decision,
-        hashes: {
-          marketDataHash,
-          modelOutputHash,
-          finalDecisionHash
-        }
-      },
-      payment
-    });
+    let audit;
+    try {
+      audit = await writeAuditRecord({
+        requestId: state.runId,
+        decision: {
+          ...state.decision,
+          hashes: {
+            marketDataHash,
+            modelOutputHash,
+            finalDecisionHash
+          }
+        },
+        payment
+      });
+    } catch (error) {
+      audit = {
+        mode: "failed",
+        status: "failed",
+        messageHash: hashJson({ requestId: state.runId, decision: state.decision, payment }),
+        error: error.message,
+        note: "Decision completed, but HCS audit submission failed."
+      };
+    }
 
     return {
       ...audit,
+      status: audit.status ?? "recorded",
       marketDataHash,
       modelOutputHash,
       finalDecisionHash,

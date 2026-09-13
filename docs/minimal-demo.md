@@ -1,17 +1,18 @@
 # Minimal Agent Committee x402 + Hedera Demo
 
-This demo proves the first Oasis Agent Committee loop:
+This demo proves the first Oasis user-paid Agent service loop:
 
-1. Strategy Agent proposes researching an ETH breakout.
-2. Risk Agent requests a paid adversarial risk challenge.
-3. Market Research Agent requests a paid market signal.
-4. User Policy checks each payment against service permissions, total budget, per-call limits, and service budgets.
-5. Each service responds with HTTP 402.
-6. The committee creates Hedera HBAR x402 payment payloads.
-7. The services settle payments through the Blocky402/Hedera adapter.
-8. The committee synthesizes the gated market signal and risk challenge.
-9. Execution Agent only creates a simulated order if policy and risk checks pass.
-10. The runtime records an audit summary and committee transcript.
+1. The user configures User Policy settings for each strategy analysis: total budget boundary, paid Agent call limit, and enabled paid Agents.
+2. In the frontend flow, the user authorizes that budget boundary once from the Policy page.
+3. The backend records the authorized session budget for automatic paid Agent charges.
+4. Strategy Agent is free. It parses the natural-language trading goal and drafts a strategy.
+5. Strategy Agent decides whether evidence is insufficient and recommends Market Agent and/or Risk Agent.
+6. Each paid Agent quote is usage-based. Market Agent prices by requested market data volume, while Risk Agent prices by challenge workload.
+7. User Policy checks each quote against allowed paid Agents, remaining budget, per-call limit, and Agent-level budgets.
+8. In real payment mode, the runtime sends x402 v2 Hedera payment payloads to Blocky402 for approved internal paid Agent charges.
+9. The committee synthesizes the paid Market Agent and Risk Agent outputs.
+10. Execution Agent is free and creates a simulation-only execution report when the final strategy permits it.
+11. The runtime records Agent charge records, simulated execution output, audit summary, and committee transcript.
 
 Run it locally:
 
@@ -32,14 +33,24 @@ Run the visual web demo:
 pnpm demo:web
 ```
 
-Then open the printed localhost URL and click `运行演示`.
+Then open the printed localhost URL, authorize the budget boundary on the Policy page, and run the strategy loop from Agent Plan.
 
-The default payment mode is `HEDERA_PAYMENT_MODE=mock`. It uses:
+The default payment mode is `HEDERA_PAYMENT_MODE=real`. It uses funded Hedera testnet accounts and HBAR:
 
 - network: `hedera:testnet`
 - asset: `0.0.0` native HBAR
-- facilitator: `mock://blocky402`
-- transaction ids: deterministic Hedera-shaped demo ids
+- payer: `HEDERA_USER_PAYER_ACCOUNT_ID`
+- spender: `HEDERA_OASIS_SPENDER_ACCOUNT_ID`
+- merchant receiver: `HEDERA_OASIS_MERCHANT_ACCOUNT_ID`
+- facilitator: `BLOCKY402_FACILITATOR_URL`
+- transaction ids: returned by Blocky402 `/settle`
+
+Paid Agent pricing is dynamic:
+
+- Market Agent: base fee plus requested candle count, indicator count, and timeframe count.
+- Risk Agent: base fee plus stress scenario count, policy/risk checks, and risk factor count.
+
+The Strategy Agent includes the expected usage in each quote. The paid service recalculates the same usage-based price from request parameters before issuing or validating the x402 payment requirement.
 
 Real strategy runs use live market data by default and require an OpenAI API key from the frontend path. For deterministic local tests, set:
 
@@ -48,16 +59,19 @@ OASIS_LLM_MODE=rule OASIS_MARKET_DATA_MODE=fixture pnpm test
 ```
 
 Real settlement is isolated behind `packages/hedera/src/index.mjs`.
-When Blocky402 and Hedera credentials are available, run with:
+Run with:
 
 ```bash
 HEDERA_PAYMENT_MODE=real \
 HEDERA_NETWORK=testnet \
-HEDERA_AGENT_ACCOUNT_ID=... \
-HEDERA_AGENT_PRIVATE_KEY=... \
-HEDERA_SERVICE_ACCOUNT_ID=... \
+HEDERA_USER_PAYER_ACCOUNT_ID=... \
+HEDERA_OASIS_SPENDER_ACCOUNT_ID=... \
+HEDERA_OASIS_SPENDER_PRIVATE_KEY=... \
+HEDERA_OASIS_MERCHANT_ACCOUNT_ID=... \
 BLOCKY402_FACILITATOR_URL=... \
 pnpm demo
 ```
+
+Tests and offline development can still force local mock settlement with `HEDERA_PAYMENT_MODE=mock`.
 
 Do not commit funded accounts, private keys, seed phrases, or facilitator credentials.

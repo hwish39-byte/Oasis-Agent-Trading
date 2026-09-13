@@ -4,11 +4,14 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@hiero-ledger/sdk": "2.85.0",
     "@x402/hedera": "^2.25.0"
   },
   "scripts": {
     "demo": "NODE_USE_ENV_PROXY=1 node apps/agent/src/demo.mjs",
     "demo:check-real": "NODE_USE_ENV_PROXY=1 node apps/agent/src/check-real-config.mjs",
+    "demo:create-hcs-topic": "NODE_USE_ENV_PROXY=1 node apps/agent/src/create-hcs-topic.mjs",
+    "demo:real-payment": "NODE_USE_ENV_PROXY=1 node apps/agent/src/real-payment-smoke.mjs",
     "demo:web": "NODE_USE_ENV_PROXY=1 node apps/demo-api/src/server.mjs",
     "demo:frontend": "NODE_USE_ENV_PROXY=1 node apps/demo-api/src/server.mjs",
     "demo:service": "NODE_USE_ENV_PROXY=1 node apps/market-signal-api/src/server.mjs",

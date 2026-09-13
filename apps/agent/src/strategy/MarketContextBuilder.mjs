@@ -64,8 +64,9 @@ export function createDefaultMarketDataProvider() {
 }
 
 export class CompositeMarketDataProvider {
-  constructor({ providers }) {
+  constructor({ providers, fallbackProvider = new FixedSnapshotMarketDataProvider() }) {
     this.providers = providers;
+    this.fallbackProvider = fallbackProvider;
   }
 
   async getSignal(params) {
@@ -79,7 +80,16 @@ export class CompositeMarketDataProvider {
       }
     }
 
-    throw new Error(`All live market data providers failed: ${errors.join(" | ")}`);
+    const fallbackSignal = await this.fallbackProvider.getSignal(params);
+    return {
+      ...fallbackSignal,
+      source: "local_snapshot_live_fallback",
+      isFresh: false,
+      warnings: [
+        ...(fallbackSignal.warnings ?? []),
+        `live market data fallback used: ${errors.join(" | ")}`
+      ]
+    };
   }
 }
 

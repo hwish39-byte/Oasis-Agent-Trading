@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequestId } from "../../../packages/shared/src/index.mjs";
+import { fetchAuditMessages, getHederaRuntimeStatus } from "../../../packages/hedera/src/index.mjs";
 import { runSingleAgentDemo } from "../../agent/src/demo.mjs";
 import { StrategyAgent } from "../../agent/src/strategy/StrategyAgent.mjs";
 import { createDefaultReasoner } from "../../agent/src/strategy/LLMReasoner.mjs";
@@ -27,6 +28,23 @@ export async function createDemoApiServer({ port = 4173, host = "127.0.0.1" } = 
         return;
       }
 
+      if (request.method === "GET" && url.pathname === "/audit/messages") {
+        const result = await fetchAuditMessages({
+          topicId: url.searchParams.get("topicId") || undefined,
+          limit: url.searchParams.get("limit") || undefined,
+          order: url.searchParams.get("order") || undefined,
+          minTimestamp: url.searchParams.get("minTimestamp") || undefined
+        });
+        sendJson(response, 200, result);
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/hedera/status") {
+        const status = await getHederaRuntimeStatus();
+        sendJson(response, 200, status);
+        return;
+      }
+
       if (request.method === "POST" && url.pathname === "/demo/run") {
         const result = await runSingleAgentDemo();
         sendJson(response, 200, result);
@@ -35,10 +53,11 @@ export async function createDemoApiServer({ port = 4173, host = "127.0.0.1" } = 
 
       if (request.method === "POST" && url.pathname === "/strategy/intent") {
         const body = await readJsonBody(request);
-        const strategyAgent = new StrategyAgent();
+        const strategyAgent = new StrategyAgent({ locale: body.locale });
         const intent = await strategyAgent.parseIntent({
           message: body.message,
-          modelConfig: body.modelConfig
+          modelConfig: body.modelConfig,
+          locale: body.locale
         });
         sendJson(response, 200, intent);
         return;
@@ -46,7 +65,7 @@ export async function createDemoApiServer({ port = 4173, host = "127.0.0.1" } = 
 
       if (request.method === "POST" && url.pathname === "/strategy/policy/draft") {
         const body = await readJsonBody(request);
-        const strategyAgent = new StrategyAgent();
+        const strategyAgent = new StrategyAgent({ locale: body.locale });
         const policyDraft = strategyAgent.draftPolicy({ intent: body.intent });
         sendJson(response, 200, { policyDraft, requiresUserApproval: true });
         return;
@@ -54,11 +73,12 @@ export async function createDemoApiServer({ port = 4173, host = "127.0.0.1" } = 
 
       if (request.method === "POST" && url.pathname === "/strategy/draft") {
         const body = await readJsonBody(request);
-        const strategyAgent = new StrategyAgent();
+        const strategyAgent = new StrategyAgent({ locale: body.locale });
         const strategyDraft = await strategyAgent.draftStrategy({
           intent: body.intent,
           policy: body.policy,
-          modelConfig: body.modelConfig
+          modelConfig: body.modelConfig,
+          locale: body.locale
         });
         sendJson(response, 200, { strategyDraft, requiresUserApproval: true });
         return;
@@ -66,11 +86,12 @@ export async function createDemoApiServer({ port = 4173, host = "127.0.0.1" } = 
 
       if (request.method === "POST" && url.pathname === "/strategy/plan") {
         const body = await readJsonBody(request);
-        const strategyAgent = new StrategyAgent();
+        const strategyAgent = new StrategyAgent({ locale: body.locale });
         const plan = await strategyAgent.planEvidence({
           intent: body.intent,
           policy: body.policy,
-          modelConfig: body.modelConfig
+          modelConfig: body.modelConfig,
+          locale: body.locale
         });
         sendJson(response, 200, plan);
         return;
@@ -79,18 +100,19 @@ export async function createDemoApiServer({ port = 4173, host = "127.0.0.1" } = 
       if (request.method === "POST" && url.pathname === "/strategy/run") {
         const body = await readJsonBody(request);
         const policy = body.policy ? Object.freeze(body.policy) : undefined;
-        const approval = validateStrategyApproval({ approval: body.userApproval, policy });
-        if (!approval.allowed) {
+        const authorization = validateBudgetAuthorization({ policy });
+        if (!authorization.allowed) {
           sendJson(response, 403, {
-            error: "strategy_approval_required",
-            message: approval.reasons.join("; "),
-            reasons: approval.reasons
+            error: "budget_authorization_required",
+            message: authorization.reasons.join("; "),
+            reasons: authorization.reasons
           });
           return;
         }
         const result = await runSingleAgentDemo({
           strategyAgent: policy ? new StrategyAgent({
             policy,
+            locale: body.locale,
             reasoner: createDefaultReasoner({
               provider: body.modelConfig?.provider,
               model: body.modelConfig?.model,
@@ -105,6 +127,31 @@ export async function createDemoApiServer({ port = 4173, host = "127.0.0.1" } = 
         return;
       }
 
+      if (request.method === "POST" && url.pathname === "/billing/session/authorize") {
+        const body = await readJsonBody(request);
+        const sessionBudgetTinybar = Number(body.sessionBudgetTinybar);
+
+        if (!Number.isFinite(sessionBudgetTinybar) || sessionBudgetTinybar <= 0) {
+          sendJson(response, 400, {
+            error: "invalid_session_budget",
+            message: "Session budget must be greater than zero."
+          });
+          return;
+        }
+
+        sendJson(response, 200, {
+          status: "authorized",
+          sessionId: createRequestId("escrow_session"),
+          payerAccountId: "local-session",
+          authorizedBudgetTinybar: sessionBudgetTinybar,
+          availableBalanceTinybar: sessionBudgetTinybar,
+          spentTinybar: 0,
+          fundingReference: `local://session-budget/${Date.now()}`,
+          authorizedAt: new Date().toISOString()
+        });
+        return;
+      }
+
       if (request.method === "GET" && url.pathname === "/services/quotes") {
         const strategyAgent = new StrategyAgent();
         sendJson(response, 200, strategyAgent.getServiceQuotes({
@@ -112,31 +159,6 @@ export async function createDemoApiServer({ port = 4173, host = "127.0.0.1" } = 
           asset: url.searchParams.get("asset"),
           depth: url.searchParams.get("depth")
         }));
-        return;
-      }
-
-      if (request.method === "POST" && url.pathname === "/strategy/approval") {
-        const body = await readJsonBody(request);
-        const policy = body.policy;
-        if (!policy?.id) {
-          sendJson(response, 400, {
-            error: "invalid_policy",
-            message: "policy is required before Strategy Agent can run"
-          });
-          return;
-        }
-
-        sendJson(response, 200, {
-          status: "approved",
-          approvalId: createRequestId("approval"),
-          policyId: policy.id,
-          targetAsset: policy.targetAsset,
-          dailyBudgetTinybar: policy.dailyBudgetTinybar,
-          maxPaymentPerCallTinybar: policy.maxPaymentPerCallTinybar,
-          allowedServices: policy.allowedServices,
-          executionMode: policy.executionMode,
-          approvedAt: new Date().toISOString()
-        });
         return;
       }
 
@@ -189,23 +211,31 @@ export async function createDemoApiServer({ port = 4173, host = "127.0.0.1" } = 
   };
 }
 
-function validateStrategyApproval({ approval, policy }) {
+function validateBudgetAuthorization({ policy }) {
   const reasons = [];
 
-  if (!policy) reasons.push("policy is required");
-  if (!approval || approval.status !== "approved") reasons.push("user approval is required before running Strategy Agent");
-
-  if (policy && approval) {
-    if (approval.policyId !== policy.id) reasons.push(`approval policyId ${approval.policyId} does not match ${policy.id}`);
-    if (approval.targetAsset !== policy.targetAsset) reasons.push(`approval targetAsset ${approval.targetAsset} does not match ${policy.targetAsset}`);
-    if (approval.dailyBudgetTinybar !== policy.dailyBudgetTinybar) reasons.push("approval daily budget does not match policy");
-    if (approval.maxPaymentPerCallTinybar !== policy.maxPaymentPerCallTinybar) reasons.push("approval per-call limit does not match policy");
-    if (approval.executionMode !== policy.executionMode) reasons.push("approval execution mode does not match policy");
-    if (JSON.stringify(approval.allowedServices ?? []) !== JSON.stringify(policy.allowedServices ?? [])) {
-      reasons.push("approval allowed services do not match policy");
-    }
+  if (!policy) {
+    reasons.push("policy is required");
+    return { allowed: false, reasons };
   }
 
+  const sessionBudgetTinybar = Number(policy.sessionBudgetTinybar ?? policy.dailyBudgetTinybar);
+  const maxPaidAgentCallTinybar = Number(policy.maxPaidAgentCallTinybar ?? policy.maxPaymentPerCallTinybar);
+  const escrow = policy.sessionEscrow ?? {};
+  const authorizedBudgetTinybar = Number(escrow.authorizedBudgetTinybar ?? 0);
+  const availableBalanceTinybar = Number(escrow.availableBalanceTinybar ?? 0);
+
+  if (policy.autoPayEnabled !== true) reasons.push("auto-pay must be enabled for delegated budget spending");
+  if (escrow.status !== "authorized") reasons.push("session budget boundary is not authorized");
+  if (!escrow.sessionId) reasons.push("session budget authorization is missing a sessionId");
+  if (!Number.isFinite(sessionBudgetTinybar) || sessionBudgetTinybar <= 0) reasons.push("session budget must be greater than zero");
+  if (!Number.isFinite(maxPaidAgentCallTinybar) || maxPaidAgentCallTinybar <= 0) reasons.push("per-agent call limit must be greater than zero");
+  if (!Number.isFinite(authorizedBudgetTinybar) || authorizedBudgetTinybar < sessionBudgetTinybar) {
+    reasons.push("authorized budget is lower than the submitted policy budget");
+  }
+  if (!Number.isFinite(availableBalanceTinybar) || availableBalanceTinybar <= 0) {
+    reasons.push("authorized session budget has no available balance");
+  }
   return {
     allowed: reasons.length === 0,
     reasons

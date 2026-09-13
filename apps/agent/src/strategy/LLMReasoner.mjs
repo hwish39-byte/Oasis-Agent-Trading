@@ -8,19 +8,20 @@ export class StrategyReasoner {
 }
 
 export class RuleBasedStrategyReasoner extends StrategyReasoner {
-  async generateHypothesis({ policy, marketContext, memory, intent, strategyDraft }) {
+  async generateHypothesis({ policy, marketContext, memory, intent, strategyDraft, locale } = {}) {
     const snapshot = marketContext.snapshot;
     const initialConfidence = clamp(Number(snapshot.confidence ?? 0.5), 0, 1);
     const direction = snapshot.momentum === "negative" ? "SHORT" : snapshot.momentum === "positive" ? "LONG" : "NEUTRAL";
     const setup = inferSetup({ intent, strategyDraft, snapshot });
+    const isZh = locale === "zh-CN";
     const missingEvidence = [];
 
     if (snapshot.volumeConfirmation === "weak") {
-      missingEvidence.push("independent market confirmation");
+      missingEvidence.push(isZh ? "独立市场确认" : "independent market confirmation");
     }
 
     if (initialConfidence >= 0.55) {
-      missingEvidence.push("adversarial downside review");
+      missingEvidence.push(isZh ? "对抗式下行风险复核" : "adversarial downside review");
     }
 
     return assertStrategyHypothesis({
@@ -28,13 +29,21 @@ export class RuleBasedStrategyReasoner extends StrategyReasoner {
       direction,
       setup,
       initialConfidence,
-      reasoning: [
-        `${policy.targetAsset} ${intent?.timeframe ?? snapshot.timeframe ?? "market"} ${intent?.strategyType ?? strategyDraft?.strategyType ?? "strategy"} idea`,
-        `live market regime is ${marketContext.regime}`,
-        `market source is ${marketContext.source}`,
-        `market signal recommendation is ${snapshot.recommendation}`,
-        `breakout score is ${snapshot.breakoutScore}`
-      ],
+      reasoning: isZh
+        ? [
+            `${policy.targetAsset} ${intent?.timeframe ?? snapshot.timeframe ?? "market"} ${translateStrategyType(intent?.strategyType ?? strategyDraft?.strategyType)}想法`,
+            `当前市场状态：${translateMarketRegime(marketContext.regime)}`,
+            `市场数据来源：${marketContext.source}`,
+            `市场信号建议：${translateRecommendation(snapshot.recommendation)}`,
+            `突破评分：${snapshot.breakoutScore}`
+          ]
+        : [
+            `${policy.targetAsset} ${intent?.timeframe ?? snapshot.timeframe ?? "market"} ${intent?.strategyType ?? strategyDraft?.strategyType ?? "strategy"} idea`,
+            `live market regime is ${marketContext.regime}`,
+            `market source is ${marketContext.source}`,
+            `market signal recommendation is ${snapshot.recommendation}`,
+            `breakout score is ${snapshot.breakoutScore}`
+          ],
       uncertainty: {
         level: missingEvidence.length > 1 ? "medium" : "low",
         missingEvidence
@@ -61,16 +70,20 @@ export class OpenAIResponsesStrategyReasoner extends StrategyReasoner {
     return this.modelClient.available;
   }
 
-  async generateHypothesis({ userMessage, intent, strategyDraft, policy, marketContext, memory }) {
+  async generateHypothesis({ userMessage, intent, strategyDraft, policy, marketContext, memory, locale } = {}) {
     if (!this.available) {
       throw new Error(`${this.modelClient.apiKeyEnv} is required for ${this.modelClient.id}`);
     }
 
     const hypothesis = await this.modelClient.generateJson({
       name: "strategy_hypothesis",
-      system: "You are a Strategy Agent for a budget-constrained trading committee. Return only JSON that matches the requested schema. You may suggest evidence to buy, but you may not authorize payment or execution.",
+      system: [
+        "You are a Strategy Agent for a budget-constrained trading committee. Return only JSON that matches the requested schema. You may suggest evidence to buy, but you may not authorize payment or execution.",
+        locale === "zh-CN" ? "Write all free-text fields in Simplified Chinese. Keep enum values such as LONG, SHORT, BREAKOUT, HOLD, and SIMULATED_BUY unchanged." : "Write all free-text fields in English."
+      ].join(" "),
       user: {
         task: "Generate a trading hypothesis and identify missing evidence.",
+        locale: locale ?? "en-US",
         userMessage,
         intent,
         strategyDraft,
@@ -93,6 +106,57 @@ export class OpenAIResponsesStrategyReasoner extends StrategyReasoner {
   }
 }
 
+export class FallbackStrategyReasoner extends StrategyReasoner {
+  constructor({
+    primary,
+    fallback = new RuleBasedStrategyReasoner()
+  } = {}) {
+    super();
+    this.primary = primary;
+    this.fallback = fallback;
+  }
+
+  async generateHypothesis(params = {}) {
+    try {
+      return await this.primary.generateHypothesis(params);
+    } catch (error) {
+      const hypothesis = await this.fallback.generateHypothesis(params);
+      return assertStrategyHypothesis({
+        ...hypothesis,
+        generatedBy: `${this.primary.modelClient.id}->rule_based_fallback`,
+        llmFallback: {
+          provider: this.primary.modelClient.id,
+          reason: error.message
+        }
+      });
+    }
+  }
+}
+
+function translateStrategyType(value) {
+  if (value === "mean_reversion") return "均值回归";
+  if (value === "momentum") return "趋势动量";
+  if (value === "range") return "区间交易";
+  if (value === "event_driven") return "事件驱动";
+  if (value === "scalping") return "短线";
+  return "突破";
+}
+
+function translateMarketRegime(value) {
+  if (value === "bullish") return "偏多";
+  if (value === "bearish") return "偏空";
+  if (value === "volatile") return "高波动";
+  if (value === "range") return "区间震荡";
+  return value ?? "未知";
+}
+
+function translateRecommendation(value) {
+  if (value === "buy" || value === "long") return "偏多";
+  if (value === "sell" || value === "short") return "偏空";
+  if (value === "hold") return "观望";
+  return value ?? "未知";
+}
+
 export function createDefaultReasoner({
   provider,
   model,
@@ -104,7 +168,7 @@ export function createDefaultReasoner({
 
   const llm = new OpenAIResponsesStrategyReasoner({ provider, model });
   if (requireLlm) return llm;
-  return llm.available ? llm : new RuleBasedStrategyReasoner();
+  return new FallbackStrategyReasoner({ primary: llm });
 }
 
 function clamp(value, min, max) {

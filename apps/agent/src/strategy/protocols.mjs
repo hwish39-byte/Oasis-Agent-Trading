@@ -2,10 +2,14 @@ export function createResearchRequest({ state, toolCall }) {
   return {
     type: "ResearchRequest",
     fromAgent: "Strategy Agent",
-    toAgent: "Market Research Agent",
+    toAgent: "Market Agent",
     runId: state.runId,
     asset: state.asset,
     hypothesis: state.hypothesis,
+    reasoningTier: toolCall.reasoningTier,
+    quotedTinybar: toolCall.quotedTinybar,
+    usage: toolCall.usage,
+    pricingModel: toolCall.pricingModel,
     maxFeeTinybar: toolCall.maxWillingToPayTinybar,
     reason: toolCall.reason,
     requiredBeforeExecution: toolCall.required
@@ -21,6 +25,10 @@ export function createRiskChallengeRequest({ state, toolCall }) {
     asset: state.asset,
     hypothesis: state.hypothesis,
     evidence: state.evidence,
+    reasoningTier: toolCall.reasoningTier,
+    quotedTinybar: toolCall.quotedTinybar,
+    usage: toolCall.usage,
+    pricingModel: toolCall.pricingModel,
     maxFeeTinybar: toolCall.maxWillingToPayTinybar,
     reason: toolCall.reason,
     requiredBeforeExecution: true
